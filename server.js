@@ -70,6 +70,8 @@ const categoryMap = {
     source: 'tmdb',
     media: 'movie',
     label: 'Hollywood',
+    // For Hollywood, first try global trending (which already has many US/English films) then fallback to discover
+    useTrendingFirst: true,
     filter: item => item.original_language === 'en' || (item.origin_country && item.origin_country.includes('US')),
     discover: { region: 'US' }
   },
@@ -77,49 +79,42 @@ const categoryMap = {
     source: 'tmdb',
     media: 'movie',
     label: 'Bollywood',
-    filter: item => item.original_language === 'hi' || (item.origin_country && item.origin_country.includes('IN')),
-    discover: { region: 'IN' }
+    useTrendingFirst: false,
+    discover: { region: 'IN', with_original_language: 'hi' }
   },
   'K-Drama': {
     source: 'tmdb',
     media: 'tv',
     label: 'K-Drama',
-    filter: item => item.origin_country && item.origin_country.includes('KR'),
+    useTrendingFirst: false,
     discover: { with_origin_country: 'KR' }
   },
   'J-Drama': {
     source: 'tmdb',
     media: 'tv',
     label: 'J-Drama',
-    filter: item => item.origin_country && item.origin_country.includes('JP'),
+    useTrendingFirst: false,
     discover: { with_origin_country: 'JP' }
   },
   'C-Drama': {
     source: 'tmdb',
     media: 'tv',
     label: 'C-Drama',
-    filter: item => item.origin_country && item.origin_country.includes('CN'),
+    useTrendingFirst: false,
     discover: { with_origin_country: 'CN' }
   },
   Tokusatsu: {
     source: 'tmdb',
     media: 'tv',
     label: 'Tokusatsu',
-    filter: item => {
-      if (!item.origin_country || !item.origin_country.includes('JP')) return false;
-      const genreIds = item.genre_ids || [];
-      return genreIds.some(id => id === 10759 || id === 10765);
-    },
+    useTrendingFirst: false,
     discover: { with_origin_country: 'JP', with_genres: '10759,10765' }
   },
   Animation: {
     source: 'tmdb',
     media: 'movie',
     label: 'Animation',
-    filter: item => {
-      const genreIds = item.genre_ids || [];
-      return genreIds.includes(16) && (item.original_language === 'en' || (item.origin_country && ['US','GB','CA','AU'].some(c => item.origin_country.includes(c))));
-    },
+    useTrendingFirst: false,
     discover: { with_genres: '16', region: 'US' }
   }
 };
@@ -147,17 +142,26 @@ app.get('/api/trending', async (req, res) => {
       items = (data.Page.media || []).map(item => mapAniListItem(item, config.type));
     } else if (config.source === 'tmdb') {
       let results = [];
-      // First try trending
-      let trending = await fetchTmdb(`trending/${config.media}/week`, { page: 1 });
-      if (config.filter) trending = trending.filter(config.filter);
-      if (trending.length >= 6) {
-        results = trending;
+      if (config.useTrendingFirst) {
+        // Try trending
+        let trending = await fetchTmdb(`trending/${config.media}/week`, { page: 1 });
+        if (config.filter) trending = trending.filter(config.filter);
+        if (trending.length >= 6) {
+          results = trending;
+        } else {
+          // Fallback to discover
+          const discoverParams = { sort_by: 'popularity.desc', page: 1, ...config.discover };
+          const fallback = await fetchTmdb(`discover/${config.media}`, discoverParams);
+          if (config.filter) results = fallback.filter(config.filter);
+          else results = fallback;
+        }
       } else {
-        // Fallback to discover with category-specific params
+        // Direct discover with popularity sort
         const discoverParams = { sort_by: 'popularity.desc', page: 1, ...config.discover };
-        const fallback = await fetchTmdb(`discover/${config.media}`, discoverParams);
-        if (config.filter) results = fallback.filter(config.filter);
-        else results = fallback;
+        results = await fetchTmdb(`discover/${config.media}`, discoverParams);
+        // No need for extra filter because discover params already filter correctly
+        // But we might want to limit to 18
+        results = results.slice(0, 18);
       }
       items = results.slice(0, 18).map(item => mapTmdbItem(item, config.media, config.label));
     }
