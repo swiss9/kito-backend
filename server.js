@@ -62,11 +62,12 @@ async function fetchTmdb(endpoint, params = {}) {
   return data.results || [];
 }
 
-async function fetchTmdbList(listId) {
+async function fetchTmdbList(listId, page = 1) {
   if (!TMDB_API_KEY) return [];
   const url = new URL(`https://api.themoviedb.org/3/list/${listId}`);
   url.searchParams.set('api_key', TMDB_API_KEY);
   url.searchParams.set('language', 'en-US');
+  url.searchParams.set('page', page);
   const res = await fetch(url);
   if (!res.ok) return [];
   const data = await res.json();
@@ -110,13 +111,14 @@ const categoryMap = {
 app.get('/api/trending', async (req, res) => {
   try {
     const category = req.query.category || 'Anime';
+    const page = parseInt(req.query.page) || 1;
     const config = categoryMap[category];
     if (!config) return res.status(400).json({ error: 'Invalid category' });
     let items = [];
     if (config.source === 'anilist') {
       const query = `
-        query($type: MediaType, $sort: [MediaSort]) {
-          Page(page: 1, perPage: 18) {
+        query($type: MediaType, $sort: [MediaSort], $page: Int) {
+          Page(page: $page, perPage: 20) {
             media(type: $type, sort: $sort, status: RELEASING) {
               title { romaji english native }
               seasonYear
@@ -125,34 +127,29 @@ app.get('/api/trending', async (req, res) => {
           }
         }
       `;
-      const variables = { type: config.type.toUpperCase(), sort: ['TRENDING_DESC', 'POPULARITY_DESC'] };
+      const variables = { type: config.type.toUpperCase(), sort: ['TRENDING_DESC', 'POPULARITY_DESC'], page };
       const data = await fetchAniList(query, variables);
       items = (data.Page.media || []).map(item => mapAniListItem(item, config.type));
     } else if (config.source === 'tmdb_list') {
-      const results = await fetchTmdbList(config.listId);
-      items = results.slice(0, 18).map(item => mapTmdbItem(item, 'movie', config.label));
+      const results = await fetchTmdbList(config.listId, page);
+      items = results.map(item => mapTmdbItem(item, 'movie', config.label));
     } else if (config.source === 'tmdb') {
       let results = [];
-      let discoverParams = { sort_by: 'popularity.desc', page: 1 };
-
+      let discoverParams = { sort_by: 'popularity.desc', page, ...config.discover };
       if (category === 'Tokusatsu' && config.discover?.with_keywords) {
-        const keywordParams = { ...discoverParams, ...config.discover };
-        const keywordResults = await fetchTmdb(`discover/${config.media}`, keywordParams);
+        const keywordResults = await fetchTmdb(`discover/${config.media}`, discoverParams);
         if (keywordResults.length >= 6) {
           results = keywordResults;
         } else {
-          const fallbackParams = { ...discoverParams, ...config.fallback };
-          const fallbackResults = await fetchTmdb(`discover/${config.media}`, fallbackParams);
-          results = fallbackResults;
+          const fallbackParams = { sort_by: 'popularity.desc', page, ...config.fallback };
+          results = await fetchTmdb(`discover/${config.media}`, fallbackParams);
         }
       } else {
-        const finalParams = { ...discoverParams, ...config.discover };
-        results = await fetchTmdb(`discover/${config.media}`, finalParams);
+        results = await fetchTmdb(`discover/${config.media}`, discoverParams);
       }
-
-      items = results.slice(0, 18).map(item => mapTmdbItem(item, config.media, config.label));
+      items = results.map(item => mapTmdbItem(item, config.media, config.label));
     }
-    res.json({ category, items });
+    res.json({ category, items, page });
   } catch (err) {
     console.error('Trending error:', err);
     res.status(500).json({ error: err.message || 'Failed to fetch trending' });
@@ -186,7 +183,7 @@ app.get('/api/search', async (req, res) => {
         const items = (data.Page.media || []).map(item => mapAniListItem(item, config.type));
         results.push(...items);
       } else if (config.source === 'tmdb_list' && TMDB_API_KEY) {
-        const listItems = await fetchTmdbList(config.listId);
+        const listItems = await fetchTmdbList(config.listId, 1);
         const items = listItems.slice(0, 5).map(item => mapTmdbItem(item, 'movie', config.label));
         results.push(...items);
       } else if (config.source === 'tmdb' && TMDB_API_KEY) {
