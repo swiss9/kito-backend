@@ -8,7 +8,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-const TMDB_API_KEY = process.env.TMDB_API_KEY || 'your_tmdb_api_key_here';
+const TMDB_API_KEY = process.env.TMDB_API_KEY || '';
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w300';
 
 const ANILIST_API = 'https://graphql.anilist.co';
@@ -72,6 +72,20 @@ function getTmdbUrl(media) {
   return `https://api.themoviedb.org/3/trending/${media}/week?api_key=${TMDB_API_KEY}&language=en-US`;
 }
 
+async function fetchTmdb(media) {
+  if (!TMDB_API_KEY) {
+    throw new Error('TMDB_API_KEY not set');
+  }
+  const url = getTmdbUrl(media);
+  const response = await fetch(url);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`TMDB API error: ${response.status} - ${text}`);
+  }
+  const data = await response.json();
+  return data.results || [];
+}
+
 app.get('/api/trending', async (req, res) => {
   try {
     const category = req.query.category || 'Anime';
@@ -116,10 +130,14 @@ app.get('/api/trending', async (req, res) => {
       const results = data.Page.media || [];
       items = results.map(item => mapAniListItem(item, config.type));
     } else if (config.source === 'tmdb') {
-      const response = await fetch(getTmdbUrl(config.media));
-      const data = await response.json();
-      const results = data.results || [];
-      items = results.map(item => mapTmdbItem(item, config.media));
+      try {
+        const results = await fetchTmdb(config.media);
+        items = results.map(item => mapTmdbItem(item, config.media));
+      } catch (tmdbError) {
+        console.error('TMDB error:', tmdbError.message);
+        // Fallback to empty array to avoid frontend error
+        items = [];
+      }
     }
 
     res.json({ category, items });
@@ -180,11 +198,19 @@ app.get('/api/search', async (req, res) => {
         const items = (data.Page.media || []).map(item => mapAniListItem(item, config.type));
         results.push(...items);
       } else if (config.source === 'tmdb') {
-        const url = `https://api.themoviedb.org/3/search/${config.media}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(q)}&language=en-US`;
-        const response = await fetch(url);
-        const data = await response.json();
-        const items = (data.results || []).slice(0, 5).map(item => mapTmdbItem(item, config.media));
-        results.push(...items);
+        try {
+          const url = `https://api.themoviedb.org/3/search/${config.media}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(q)}&language=en-US`;
+          const response = await fetch(url);
+          if (response.ok) {
+            const data = await response.json();
+            const items = (data.results || []).slice(0, 5).map(item => mapTmdbItem(item, config.media));
+            results.push(...items);
+          } else {
+            console.error(`TMDB search error for ${cat}:`, response.status);
+          }
+        } catch (err) {
+          console.error(`TMDB search exception for ${cat}:`, err.message);
+        }
       }
     }
 
@@ -266,28 +292,36 @@ app.get('/api/details', async (req, res) => {
         ];
       }
     } else if (source === 'tmdb') {
-      const url = `https://api.themoviedb.org/3/search/${type}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(title)}&language=en-US`;
-      const response = await fetch(url);
-      const data = await response.json();
-      const item = data.results?.[0];
-      if (item) {
-        description = item.overview || 'No description available.';
-        const year = item.release_date || item.first_air_date || '';
-        const yr = year ? year.substring(0, 4) : 'Latest';
-        files = [
-          {
-            label: '1080p BluRay',
-            badge: 'BATCH',
-            description: `Full ${type === 'movie' ? 'movie' : 'series'} - ${yr}`,
-            magnet: `magnet:?xt=urn:btih:${title.replace(/\s/g, '_')}_1080p`
-          },
-          {
-            label: '720p WebDL',
-            badge: 'ALT',
-            description: `Smaller encode - ${yr}`,
-            magnet: `magnet:?xt=urn:btih:${title.replace(/\s/g, '_')}_720p`
+      try {
+        const url = `https://api.themoviedb.org/3/search/${type}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(title)}&language=en-US`;
+        const response = await fetch(url);
+        if (response.ok) {
+          const data = await response.json();
+          const item = data.results?.[0];
+          if (item) {
+            description = item.overview || 'No description available.';
+            const year = item.release_date || item.first_air_date || '';
+            const yr = year ? year.substring(0, 4) : 'Latest';
+            files = [
+              {
+                label: '1080p BluRay',
+                badge: 'BATCH',
+                description: `Full ${type === 'movie' ? 'movie' : 'series'} - ${yr}`,
+                magnet: `magnet:?xt=urn:btih:${title.replace(/\s/g, '_')}_1080p`
+              },
+              {
+                label: '720p WebDL',
+                badge: 'ALT',
+                description: `Smaller encode - ${yr}`,
+                magnet: `magnet:?xt=urn:btih:${title.replace(/\s/g, '_')}_720p`
+              }
+            ];
           }
-        ];
+        } else {
+          console.error(`TMDB details error: ${response.status}`);
+        }
+      } catch (err) {
+        console.error(`TMDB details exception: ${err.message}`);
       }
     }
 
@@ -295,6 +329,20 @@ app.get('/api/details', async (req, res) => {
   } catch (error) {
     console.error('Details error:', error);
     res.status(500).json({ error: 'Failed to fetch details' });
+  }
+});
+
+app.get('/api/test-tmdb', async (req, res) => {
+  try {
+    if (!TMDB_API_KEY) {
+      return res.json({ error: 'TMDB_API_KEY not set' });
+    }
+    const url = `https://api.themoviedb.org/3/movie/550?api_key=${TMDB_API_KEY}`;
+    const response = await fetch(url);
+    const data = await response.json();
+    res.json({ status: response.status, data });
+  } catch (err) {
+    res.json({ error: err.message });
   }
 });
 
