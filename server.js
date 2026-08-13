@@ -10,7 +10,6 @@ app.use(express.json());
 const TMDB_API_KEY = process.env.TMDB_API_KEY;
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w300';
 const ANILIST_API = 'https://graphql.anilist.co';
-const MYDRAMALIST_API = 'https://mydramalist.com/api/v1';
 
 function getGradientClass(title) {
   const hash = title.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
@@ -35,16 +34,6 @@ function mapTmdbItem(item, mediaType, label) {
   const sub = `${label || mediaLabel} · ${yr}`;
   const cls = getGradientClass(title);
   const poster = item.poster_path ? `${TMDB_IMAGE_BASE}${item.poster_path}` : '';
-  return [title, sub, cls, Math.random() > 0.5, poster];
-}
-
-function mapMdlItem(item) {
-  const title = item.title || item.name || 'Unknown';
-  const year = item.year || item.release_date || '';
-  const yr = year ? year.toString().substring(0,4) : 'Latest';
-  const sub = `Series · ${yr}`;
-  const cls = getGradientClass(title);
-  const poster = item.image || item.poster || '';
   return [title, sub, cls, Math.random() > 0.5, poster];
 }
 
@@ -73,32 +62,15 @@ async function fetchTmdb(endpoint, params = {}) {
   return data.results || [];
 }
 
-async function fetchMdl(endpoint, params = {}) {
-  try {
-    const url = new URL(`${MYDRAMALIST_API}/${endpoint}`);
-    for (let [key, val] of Object.entries(params)) {
-      if (val !== undefined && val !== null && val !== '') url.searchParams.set(key, val);
-    }
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; KITO/1.0; +https://kito.app)',
-        'Accept': 'application/json',
-        'Referer': 'https://mydramalist.com/'
-      }
-    });
-    if (!res.ok) {
-      console.error(`MDL request failed: ${res.status} ${res.statusText}`);
-      return null;
-    }
-    const data = await res.json();
-    if (data.data) return data.data;
-    if (data.dramas) return data.dramas;
-    if (Array.isArray(data)) return data;
-    return [];
-  } catch (err) {
-    console.error('MDL fetch error:', err.message);
-    return null;
-  }
+async function fetchTmdbList(listId) {
+  if (!TMDB_API_KEY) return [];
+  const url = new URL(`https://api.themoviedb.org/3/list/${listId}`);
+  url.searchParams.set('api_key', TMDB_API_KEY);
+  url.searchParams.set('language', 'en-US');
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.items || [];
 }
 
 const categoryMap = {
@@ -111,10 +83,9 @@ const categoryMap = {
     discover: { region: 'US' }
   },
   Bollywood: {
-    source: 'tmdb',
-    media: 'movie',
-    label: 'Bollywood',
-    discover: { region: 'IN', with_original_language: 'hi' }
+    source: 'tmdb_list',
+    listId: '8027',
+    label: 'Bollywood'
   },
   Animation: {
     source: 'tmdb',
@@ -122,29 +93,17 @@ const categoryMap = {
     label: 'Animation',
     discover: { with_genres: '16', region: 'US' }
   },
-  'K-Drama': {
-    source: 'mdl',
-    endpoint: 'dramas',
-    params: { country: 'South Korea', sort: 'popular' },
-    fallback: { source: 'tmdb', media: 'tv', label: 'K-Drama', discover: { with_origin_country: 'KR' } }
-  },
-  'J-Drama': {
-    source: 'mdl',
-    endpoint: 'dramas',
-    params: { country: 'Japan', sort: 'popular' },
-    fallback: { source: 'tmdb', media: 'tv', label: 'J-Drama', discover: { with_origin_country: 'JP' } }
-  },
-  'C-Drama': {
-    source: 'mdl',
-    endpoint: 'dramas',
-    params: { country: 'China', sort: 'popular' },
-    fallback: { source: 'tmdb', media: 'tv', label: 'C-Drama', discover: { with_origin_country: 'CN' } }
+  Asian: {
+    source: 'tmdb_list',
+    listId: '3322',
+    label: 'Asian'
   },
   Tokusatsu: {
-    source: 'mdl',
-    endpoint: 'search',
-    params: { q: 'tokusatsu', sort: 'popular' },
-    fallback: { source: 'tmdb', media: 'tv', label: 'Tokusatsu', discover: { with_origin_country: 'JP', with_genres: '10759,10765' } }
+    source: 'tmdb',
+    media: 'tv',
+    label: 'Tokusatsu',
+    discover: { with_keywords: '317204' },
+    fallback: { with_origin_country: 'JP', with_genres: '10759,10765' }
   }
 };
 
@@ -169,21 +128,29 @@ app.get('/api/trending', async (req, res) => {
       const variables = { type: config.type.toUpperCase(), sort: ['TRENDING_DESC', 'POPULARITY_DESC'] };
       const data = await fetchAniList(query, variables);
       items = (data.Page.media || []).map(item => mapAniListItem(item, config.type));
+    } else if (config.source === 'tmdb_list') {
+      const results = await fetchTmdbList(config.listId);
+      items = results.slice(0, 18).map(item => mapTmdbItem(item, 'movie', config.label));
     } else if (config.source === 'tmdb') {
-      const discoverParams = { sort_by: 'popularity.desc', page: 1, ...config.discover };
-      const results = await fetchTmdb(`discover/${config.media}`, discoverParams);
-      items = results.slice(0, 18).map(item => mapTmdbItem(item, config.media, config.label));
-    } else if (config.source === 'mdl') {
-      let results = await fetchMdl(config.endpoint, config.params);
-      if (results === null && config.fallback) {
-        console.log(`MDL failed, falling back to ${config.fallback.source} for ${category}`);
-        const fallbackConfig = config.fallback;
-        const discoverParams = { sort_by: 'popularity.desc', page: 1, ...fallbackConfig.discover };
-        const fallbackResults = await fetchTmdb(`discover/${fallbackConfig.media}`, discoverParams);
-        items = fallbackResults.slice(0, 18).map(item => mapTmdbItem(item, fallbackConfig.media, fallbackConfig.label));
+      let results = [];
+      let discoverParams = { sort_by: 'popularity.desc', page: 1 };
+
+      if (category === 'Tokusatsu' && config.discover?.with_keywords) {
+        const keywordParams = { ...discoverParams, ...config.discover };
+        const keywordResults = await fetchTmdb(`discover/${config.media}`, keywordParams);
+        if (keywordResults.length >= 6) {
+          results = keywordResults;
+        } else {
+          const fallbackParams = { ...discoverParams, ...config.fallback };
+          const fallbackResults = await fetchTmdb(`discover/${config.media}`, fallbackParams);
+          results = fallbackResults;
+        }
       } else {
-        items = results.slice(0, 18).map(item => mapMdlItem(item));
+        const finalParams = { ...discoverParams, ...config.discover };
+        results = await fetchTmdb(`discover/${config.media}`, finalParams);
       }
+
+      items = results.slice(0, 18).map(item => mapTmdbItem(item, config.media, config.label));
     }
     res.json({ category, items });
   } catch (err) {
@@ -218,6 +185,10 @@ app.get('/api/search', async (req, res) => {
         const data = await fetchAniList(query, variables);
         const items = (data.Page.media || []).map(item => mapAniListItem(item, config.type));
         results.push(...items);
+      } else if (config.source === 'tmdb_list' && TMDB_API_KEY) {
+        const listItems = await fetchTmdbList(config.listId);
+        const items = listItems.slice(0, 5).map(item => mapTmdbItem(item, 'movie', config.label));
+        results.push(...items);
       } else if (config.source === 'tmdb' && TMDB_API_KEY) {
         const url = `https://api.themoviedb.org/3/search/${config.media}?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(q)}&language=en-US`;
         const res = await fetch(url);
@@ -226,13 +197,6 @@ app.get('/api/search', async (req, res) => {
           const items = (data.results || []).slice(0, 5).map(item => mapTmdbItem(item, config.media));
           results.push(...items);
         }
-      } else if (config.source === 'mdl') {
-        let items = await fetchMdl('search', { q, sort: 'popular' });
-        if (items === null) {
-          continue;
-        }
-        const mapped = items.slice(0, 5).map(item => mapMdlItem(item));
-        results.push(...mapped);
       }
     }
     const seen = new Set();
@@ -299,16 +263,6 @@ app.get('/api/details', async (req, res) => {
             { label: '720p WebDL', badge: 'ALT', description: `Smaller encode - ${yr}`, magnet: `magnet:?xt=urn:btih:${title.replace(/\s/g,'_')}_720p` }
           ];
         }
-      }
-    } else if (source === 'mdl') {
-      const results = await fetchMdl('search', { q: title, sort: 'popular' });
-      const item = results?.[0];
-      if (item) {
-        description = item.synopsis || item.overview || 'No description.';
-        files = [
-          { label: 'Complete Series', badge: 'BATCH', description: `${item.title} - All episodes`, magnet: `magnet:?xt=urn:btih:${title.replace(/\s/g,'_')}_batch` },
-          { label: 'Season 1', badge: '720p', description: 'First season', magnet: `magnet:?xt=urn:btih:${title.replace(/\s/g,'_')}_s1` }
-        ];
       }
     }
     res.json({ title, description, files });
