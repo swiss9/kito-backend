@@ -79,20 +79,25 @@ async function fetchMdl(endpoint, params = {}) {
     for (let [key, val] of Object.entries(params)) {
       if (val !== undefined && val !== null && val !== '') url.searchParams.set(key, val);
     }
-    const res = await fetch(url);
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; KITO/1.0; +https://kito.app)',
+        'Accept': 'application/json',
+        'Referer': 'https://mydramalist.com/'
+      }
+    });
     if (!res.ok) {
       console.error(`MDL request failed: ${res.status} ${res.statusText}`);
-      return [];
+      return null;
     }
     const data = await res.json();
-    console.log('MDL response sample:', JSON.stringify(data).slice(0, 500));
     if (data.data) return data.data;
     if (data.dramas) return data.dramas;
     if (Array.isArray(data)) return data;
     return [];
   } catch (err) {
     console.error('MDL fetch error:', err.message);
-    return [];
+    return null;
   }
 }
 
@@ -120,22 +125,26 @@ const categoryMap = {
   'K-Drama': {
     source: 'mdl',
     endpoint: 'dramas',
-    params: { country: 'South Korea', sort: 'popular' }
+    params: { country: 'South Korea', sort: 'popular' },
+    fallback: { source: 'tmdb', media: 'tv', label: 'K-Drama', discover: { with_origin_country: 'KR' } }
   },
   'J-Drama': {
     source: 'mdl',
     endpoint: 'dramas',
-    params: { country: 'Japan', sort: 'popular' }
+    params: { country: 'Japan', sort: 'popular' },
+    fallback: { source: 'tmdb', media: 'tv', label: 'J-Drama', discover: { with_origin_country: 'JP' } }
   },
   'C-Drama': {
     source: 'mdl',
     endpoint: 'dramas',
-    params: { country: 'China', sort: 'popular' }
+    params: { country: 'China', sort: 'popular' },
+    fallback: { source: 'tmdb', media: 'tv', label: 'C-Drama', discover: { with_origin_country: 'CN' } }
   },
   Tokusatsu: {
     source: 'mdl',
     endpoint: 'search',
-    params: { q: 'tokusatsu', sort: 'popular' }
+    params: { q: 'tokusatsu', sort: 'popular' },
+    fallback: { source: 'tmdb', media: 'tv', label: 'Tokusatsu', discover: { with_origin_country: 'JP', with_genres: '10759,10765' } }
   }
 };
 
@@ -165,9 +174,16 @@ app.get('/api/trending', async (req, res) => {
       const results = await fetchTmdb(`discover/${config.media}`, discoverParams);
       items = results.slice(0, 18).map(item => mapTmdbItem(item, config.media, config.label));
     } else if (config.source === 'mdl') {
-      const results = await fetchMdl(config.endpoint, config.params);
-      console.log(`MDL raw results count: ${results.length}`);
-      items = results.slice(0, 18).map(item => mapMdlItem(item));
+      let results = await fetchMdl(config.endpoint, config.params);
+      if (results === null && config.fallback) {
+        console.log(`MDL failed, falling back to ${config.fallback.source} for ${category}`);
+        const fallbackConfig = config.fallback;
+        const discoverParams = { sort_by: 'popularity.desc', page: 1, ...fallbackConfig.discover };
+        const fallbackResults = await fetchTmdb(`discover/${fallbackConfig.media}`, discoverParams);
+        items = fallbackResults.slice(0, 18).map(item => mapTmdbItem(item, fallbackConfig.media, fallbackConfig.label));
+      } else {
+        items = results.slice(0, 18).map(item => mapMdlItem(item));
+      }
     }
     res.json({ category, items });
   } catch (err) {
@@ -211,9 +227,10 @@ app.get('/api/search', async (req, res) => {
           results.push(...items);
         }
       } else if (config.source === 'mdl') {
-        const endpoint = 'search';
-        const params = { q, sort: 'popular' };
-        const items = await fetchMdl(endpoint, params);
+        let items = await fetchMdl('search', { q, sort: 'popular' });
+        if (items === null) {
+          continue;
+        }
         const mapped = items.slice(0, 5).map(item => mapMdlItem(item));
         results.push(...mapped);
       }
