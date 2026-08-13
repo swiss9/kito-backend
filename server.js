@@ -49,32 +49,38 @@ async function fetchAniList(query, variables) {
   return data.data;
 }
 
-async function fetchTmdbDiscover(mediaType, params) {
+async function fetchTmdb(endpoint, params = {}) {
   if (!TMDB_API_KEY) return [];
-  const url = new URL(`https://api.themoviedb.org/3/discover/${mediaType}`);
+  const url = new URL(`https://api.themoviedb.org/3/${endpoint}`);
   url.searchParams.set('api_key', TMDB_API_KEY);
   url.searchParams.set('language', 'en-US');
-  url.searchParams.set('sort_by', 'popularity.desc');
-  url.searchParams.set('page', '1');
   for (let [key, val] of Object.entries(params)) {
     if (val !== undefined && val !== null && val !== '') url.searchParams.set(key, val);
   }
   const res = await fetch(url);
   if (!res.ok) return [];
   const data = await res.json();
-  return (data.results || []).slice(0, 18).map(item => mapTmdbItem(item, mediaType));
+  return data.results || [];
 }
 
 const categoryMap = {
   Anime: { source: 'anilist', type: 'anime' },
   Manga: { source: 'anilist', type: 'manga' },
-  Hollywood: { source: 'tmdb', media: 'movie', params: { region: 'US', with_original_language: 'en' } },
-  Bollywood: { source: 'tmdb', media: 'movie', params: { region: 'IN', with_original_language: 'hi' } },
-  'K-Drama': { source: 'tmdb', media: 'tv', params: { with_origin_country: 'KR' } },
-  'J-Drama': { source: 'tmdb', media: 'tv', params: { with_origin_country: 'JP' } },
-  'C-Drama': { source: 'tmdb', media: 'tv', params: { with_origin_country: 'CN' } },
-  Tokusatsu: { source: 'tmdb', media: 'tv', params: { with_origin_country: 'JP', with_genres: '10759,10765' } }, // Action & Adventure, Sci-Fi & Fantasy
-  Animation: { source: 'tmdb', media: 'movie', params: { with_genres: '16', region: 'US' } } // Animation genre
+  Hollywood: { source: 'tmdb', media: 'movie', label: 'Hollywood', filter: item => item.original_language === 'en' || (item.origin_country && item.origin_country.includes('US')) },
+  Bollywood: { source: 'tmdb', media: 'movie', label: 'Bollywood', filter: item => item.original_language === 'hi' || (item.origin_country && item.origin_country.includes('IN')) },
+  'K-Drama': { source: 'tmdb', media: 'tv', label: 'K-Drama', filter: item => item.origin_country && item.origin_country.includes('KR') },
+  'J-Drama': { source: 'tmdb', media: 'tv', label: 'J-Drama', filter: item => item.origin_country && item.origin_country.includes('JP') },
+  'C-Drama': { source: 'tmdb', media: 'tv', label: 'C-Drama', filter: item => item.origin_country && item.origin_country.includes('CN') },
+  Tokusatsu: { source: 'tmdb', media: 'tv', label: 'Tokusatsu', filter: item => {
+    if (!item.origin_country || !item.origin_country.includes('JP')) return false;
+    // genre_ids must include action & adventure (10759) or sci-fi (10765)
+    const genreIds = item.genre_ids || [];
+    return genreIds.some(id => id === 10759 || id === 10765);
+  }},
+  Animation: { source: 'tmdb', media: 'movie', label: 'Animation', filter: item => {
+    const genreIds = item.genre_ids || [];
+    return genreIds.includes(16) && (item.original_language === 'en' || (item.origin_country && ['US','GB','CA','AU'].some(c => item.origin_country.includes(c))));
+  }}
 };
 
 app.get('/api/trending', async (req, res) => {
@@ -99,7 +105,30 @@ app.get('/api/trending', async (req, res) => {
       const data = await fetchAniList(query, variables);
       items = (data.Page.media || []).map(item => mapAniListItem(item, config.type));
     } else if (config.source === 'tmdb') {
-      items = await fetchTmdbDiscover(config.media, config.params || {});
+      // Fetch trending weekly
+      let results = await fetchTmdb(`trending/${config.media}/week`, { page: 1 });
+      // Apply filter if present
+      if (config.filter) {
+        results = results.filter(config.filter);
+      }
+      // If too few results, fallback to discover (popularity) with region/genre params
+      if (results.length < 6) {
+        let discoverParams = { sort_by: 'popularity.desc', page: 1 };
+        if (config.media === 'movie') {
+          if (category === 'Hollywood') discoverParams.region = 'US';
+          else if (category === 'Bollywood') discoverParams.region = 'IN';
+          else if (category === 'Animation') discoverParams.with_genres = '16';
+        } else {
+          if (category === 'K-Drama') discoverParams.with_origin_country = 'KR';
+          else if (category === 'J-Drama') discoverParams.with_origin_country = 'JP';
+          else if (category === 'C-Drama') discoverParams.with_origin_country = 'CN';
+          else if (category === 'Tokusatsu') { discoverParams.with_origin_country = 'JP'; discoverParams.with_genres = '10759,10765'; }
+        }
+        const fallback = await fetchTmdb(`discover/${config.media}`, discoverParams);
+        results = fallback;
+      }
+      // Limit to 18 items
+      items = results.slice(0, 18).map(item => mapTmdbItem(item, config.media, config.label));
     }
     res.json({ category, items });
   } catch (err) {
