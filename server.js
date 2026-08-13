@@ -39,7 +39,7 @@ function mapTmdbItem(item, mediaType, label) {
 }
 
 function mapMdlItem(item) {
-  const title = item.title || 'Unknown';
+  const title = item.title || item.name || 'Unknown';
   const year = item.year || item.release_date || '';
   const yr = year ? year.toString().substring(0,4) : 'Latest';
   const sub = `Series · ${yr}`;
@@ -74,14 +74,26 @@ async function fetchTmdb(endpoint, params = {}) {
 }
 
 async function fetchMdl(endpoint, params = {}) {
-  const url = new URL(`${MYDRAMALIST_API}/${endpoint}`);
-  for (let [key, val] of Object.entries(params)) {
-    if (val !== undefined && val !== null && val !== '') url.searchParams.set(key, val);
+  try {
+    const url = new URL(`${MYDRAMALIST_API}/${endpoint}`);
+    for (let [key, val] of Object.entries(params)) {
+      if (val !== undefined && val !== null && val !== '') url.searchParams.set(key, val);
+    }
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.error(`MDL request failed: ${res.status} ${res.statusText}`);
+      return [];
+    }
+    const data = await res.json();
+    console.log('MDL response sample:', JSON.stringify(data).slice(0, 500));
+    if (data.data) return data.data;
+    if (data.dramas) return data.dramas;
+    if (Array.isArray(data)) return data;
+    return [];
+  } catch (err) {
+    console.error('MDL fetch error:', err.message);
+    return [];
   }
-  const res = await fetch(url);
-  if (!res.ok) return [];
-  const data = await res.json();
-  return data.data || data.dramas || [];
 }
 
 const categoryMap = {
@@ -154,6 +166,7 @@ app.get('/api/trending', async (req, res) => {
       items = results.slice(0, 18).map(item => mapTmdbItem(item, config.media, config.label));
     } else if (config.source === 'mdl') {
       const results = await fetchMdl(config.endpoint, config.params);
+      console.log(`MDL raw results count: ${results.length}`);
       items = results.slice(0, 18).map(item => mapMdlItem(item));
     }
     res.json({ category, items });
