@@ -12,18 +12,6 @@ if (!TMDB_API_KEY) console.warn('Missing TMDB_API_KEY');
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w300';
 const ANILIST_API = 'https://graphql.anilist.co';
 
-const GENRE_CACHE = { movie: null, tv: null };
-async function fetchGenres(mediaType) {
-  if (GENRE_CACHE[mediaType]) return GENRE_CACHE[mediaType];
-  const url = `https://api.themoviedb.org/3/genre/${mediaType}/list?api_key=${TMDB_API_KEY}&language=en-US`;
-  const res = await fetch(url);
-  const data = await res.json();
-  const map = {};
-  (data.genres || []).forEach(g => map[g.id] = g.name);
-  GENRE_CACHE[mediaType] = map;
-  return map;
-}
-
 function getGradientClass(title) {
   const hash = title.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
   const classes = ['a1','a2','a3','a4','a5','a6','a7','a8','a9','a10','a11','a12'];
@@ -39,15 +27,15 @@ function mapAniListItem(item, type) {
   return [title, sub, cls, Math.random() > 0.5, poster];
 }
 
-function mapTmdbItem(item, mediaType) {
+function mapTmdbItem(item, mediaType, label) {
   const title = item.title || item.name || 'Unknown';
   const year = item.release_date || item.first_air_date || '';
   const yr = year ? year.substring(0, 4) : 'Latest';
   const mediaLabel = mediaType === 'movie' ? 'Film' : 'Series';
-  const sub = `${mediaLabel} · ${yr}`;
+  const sub = `${label || mediaLabel} · ${yr}`;
   const cls = getGradientClass(title);
   const poster = item.poster_path ? `${TMDB_IMAGE_BASE}${item.poster_path}` : '';
-  return { ...item, title, sub, cls, poster, year: yr };
+  return [title, sub, cls, Math.random() > 0.5, poster];
 }
 
 async function fetchAniList(query, variables) {
@@ -61,46 +49,33 @@ async function fetchAniList(query, variables) {
   return data.data;
 }
 
-const categoryMap = {
-  Anime: { source: 'anilist', type: 'anime' },
-  Manga: { source: 'anilist', type: 'manga' },
-  Hollywood: { source: 'tmdb', media: 'movie', filter: (item) => item.origin_country?.includes('US') || item.original_language === 'en' },
-  Bollywood: { source: 'tmdb', media: 'movie', filter: (item) => item.origin_country?.includes('IN') || item.original_language === 'hi' },
-  'K-Drama': { source: 'tmdb', media: 'tv', filter: (item) => item.origin_country?.includes('KR') },
-  'J-Drama': { source: 'tmdb', media: 'tv', filter: (item) => item.origin_country?.includes('JP') },
-  'C-Drama': { source: 'tmdb', media: 'tv', filter: (item) => item.origin_country?.includes('CN') },
-  Tokusatsu: { source: 'tmdb', media: 'tv', filter: async (item) => {
-    if (!item.origin_country?.includes('JP')) return false;
-    const genres = await fetchGenres('tv');
-    const genreNames = (item.genre_ids || []).map(id => genres[id]).filter(Boolean);
-    return genreNames.some(g => ['Action & Adventure', 'Sci-Fi & Fantasy', 'Action'].includes(g));
-  }},
-  Animation: { source: 'tmdb', media: 'movie', filter: async (item) => {
-    const genres = await fetchGenres('movie');
-    const genreNames = (item.genre_ids || []).map(id => genres[id]).filter(Boolean);
-    const isAnimation = genreNames.includes('Animation');
-    const origin = item.origin_country || [];
-    const isWestern = origin.some(c => ['US','GB','CA','AU','NZ'].includes(c));
-    return isAnimation && isWestern;
-  }}
-};
-
-async function fetchTmdbTrending(mediaType, filterFn) {
+async function fetchTmdbDiscover(mediaType, params) {
   if (!TMDB_API_KEY) return [];
-  const url = `https://api.themoviedb.org/3/trending/${mediaType}/week?api_key=${TMDB_API_KEY}&language=en-US`;
+  const url = new URL(`https://api.themoviedb.org/3/discover/${mediaType}`);
+  url.searchParams.set('api_key', TMDB_API_KEY);
+  url.searchParams.set('language', 'en-US');
+  url.searchParams.set('sort_by', 'popularity.desc');
+  url.searchParams.set('page', '1');
+  for (let [key, val] of Object.entries(params)) {
+    if (val !== undefined && val !== null && val !== '') url.searchParams.set(key, val);
+  }
   const res = await fetch(url);
   if (!res.ok) return [];
   const data = await res.json();
-  let items = data.results || [];
-  if (filterFn) {
-    const filtered = [];
-    for (let item of items) {
-      if (await filterFn(item)) filtered.push(item);
-    }
-    items = filtered;
-  }
-  return items.slice(0, 18).map(item => mapTmdbItem(item, mediaType));
+  return (data.results || []).slice(0, 18).map(item => mapTmdbItem(item, mediaType));
 }
+
+const categoryMap = {
+  Anime: { source: 'anilist', type: 'anime' },
+  Manga: { source: 'anilist', type: 'manga' },
+  Hollywood: { source: 'tmdb', media: 'movie', params: { region: 'US', with_original_language: 'en' } },
+  Bollywood: { source: 'tmdb', media: 'movie', params: { region: 'IN', with_original_language: 'hi' } },
+  'K-Drama': { source: 'tmdb', media: 'tv', params: { with_origin_country: 'KR' } },
+  'J-Drama': { source: 'tmdb', media: 'tv', params: { with_origin_country: 'JP' } },
+  'C-Drama': { source: 'tmdb', media: 'tv', params: { with_origin_country: 'CN' } },
+  Tokusatsu: { source: 'tmdb', media: 'tv', params: { with_origin_country: 'JP', with_genres: '10759,10765' } }, // Action & Adventure, Sci-Fi & Fantasy
+  Animation: { source: 'tmdb', media: 'movie', params: { with_genres: '16', region: 'US' } } // Animation genre
+};
 
 app.get('/api/trending', async (req, res) => {
   try {
@@ -124,12 +99,12 @@ app.get('/api/trending', async (req, res) => {
       const data = await fetchAniList(query, variables);
       items = (data.Page.media || []).map(item => mapAniListItem(item, config.type));
     } else if (config.source === 'tmdb') {
-      items = await fetchTmdbTrending(config.media, config.filter);
+      items = await fetchTmdbDiscover(config.media, config.params || {});
     }
     res.json({ category, items });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to fetch trending' });
+    console.error('Trending error:', err);
+    res.status(500).json({ error: err.message || 'Failed to fetch trending' });
   }
 });
 
@@ -178,7 +153,7 @@ app.get('/api/search', async (req, res) => {
     });
     res.json({ query: q, category, items: unique.slice(0, 30) });
   } catch (err) {
-    console.error(err);
+    console.error('Search error:', err);
     res.status(500).json({ error: 'Search failed' });
   }
 });
@@ -237,7 +212,7 @@ app.get('/api/details', async (req, res) => {
     }
     res.json({ title, description, files });
   } catch (err) {
-    console.error(err);
+    console.error('Details error:', err);
     res.status(500).json({ error: 'Details failed' });
   }
 });
