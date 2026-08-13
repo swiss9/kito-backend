@@ -66,21 +66,62 @@ async function fetchTmdb(endpoint, params = {}) {
 const categoryMap = {
   Anime: { source: 'anilist', type: 'anime' },
   Manga: { source: 'anilist', type: 'manga' },
-  Hollywood: { source: 'tmdb', media: 'movie', label: 'Hollywood', filter: item => item.original_language === 'en' || (item.origin_country && item.origin_country.includes('US')) },
-  Bollywood: { source: 'tmdb', media: 'movie', label: 'Bollywood', filter: item => item.original_language === 'hi' || (item.origin_country && item.origin_country.includes('IN')) },
-  'K-Drama': { source: 'tmdb', media: 'tv', label: 'K-Drama', filter: item => item.origin_country && item.origin_country.includes('KR') },
-  'J-Drama': { source: 'tmdb', media: 'tv', label: 'J-Drama', filter: item => item.origin_country && item.origin_country.includes('JP') },
-  'C-Drama': { source: 'tmdb', media: 'tv', label: 'C-Drama', filter: item => item.origin_country && item.origin_country.includes('CN') },
-  Tokusatsu: { source: 'tmdb', media: 'tv', label: 'Tokusatsu', filter: item => {
-    if (!item.origin_country || !item.origin_country.includes('JP')) return false;
-    // genre_ids must include action & adventure (10759) or sci-fi (10765)
-    const genreIds = item.genre_ids || [];
-    return genreIds.some(id => id === 10759 || id === 10765);
-  }},
-  Animation: { source: 'tmdb', media: 'movie', label: 'Animation', filter: item => {
-    const genreIds = item.genre_ids || [];
-    return genreIds.includes(16) && (item.original_language === 'en' || (item.origin_country && ['US','GB','CA','AU'].some(c => item.origin_country.includes(c))));
-  }}
+  Hollywood: {
+    source: 'tmdb',
+    media: 'movie',
+    label: 'Hollywood',
+    filter: item => item.original_language === 'en' || (item.origin_country && item.origin_country.includes('US')),
+    discover: { region: 'US' }
+  },
+  Bollywood: {
+    source: 'tmdb',
+    media: 'movie',
+    label: 'Bollywood',
+    filter: item => item.original_language === 'hi' || (item.origin_country && item.origin_country.includes('IN')),
+    discover: { region: 'IN' }
+  },
+  'K-Drama': {
+    source: 'tmdb',
+    media: 'tv',
+    label: 'K-Drama',
+    filter: item => item.origin_country && item.origin_country.includes('KR'),
+    discover: { with_origin_country: 'KR' }
+  },
+  'J-Drama': {
+    source: 'tmdb',
+    media: 'tv',
+    label: 'J-Drama',
+    filter: item => item.origin_country && item.origin_country.includes('JP'),
+    discover: { with_origin_country: 'JP' }
+  },
+  'C-Drama': {
+    source: 'tmdb',
+    media: 'tv',
+    label: 'C-Drama',
+    filter: item => item.origin_country && item.origin_country.includes('CN'),
+    discover: { with_origin_country: 'CN' }
+  },
+  Tokusatsu: {
+    source: 'tmdb',
+    media: 'tv',
+    label: 'Tokusatsu',
+    filter: item => {
+      if (!item.origin_country || !item.origin_country.includes('JP')) return false;
+      const genreIds = item.genre_ids || [];
+      return genreIds.some(id => id === 10759 || id === 10765);
+    },
+    discover: { with_origin_country: 'JP', with_genres: '10759,10765' }
+  },
+  Animation: {
+    source: 'tmdb',
+    media: 'movie',
+    label: 'Animation',
+    filter: item => {
+      const genreIds = item.genre_ids || [];
+      return genreIds.includes(16) && (item.original_language === 'en' || (item.origin_country && ['US','GB','CA','AU'].some(c => item.origin_country.includes(c))));
+    },
+    discover: { with_genres: '16', region: 'US' }
+  }
 };
 
 app.get('/api/trending', async (req, res) => {
@@ -105,29 +146,19 @@ app.get('/api/trending', async (req, res) => {
       const data = await fetchAniList(query, variables);
       items = (data.Page.media || []).map(item => mapAniListItem(item, config.type));
     } else if (config.source === 'tmdb') {
-      // Fetch trending weekly
-      let results = await fetchTmdb(`trending/${config.media}/week`, { page: 1 });
-      // Apply filter if present
-      if (config.filter) {
-        results = results.filter(config.filter);
-      }
-      // If too few results, fallback to discover (popularity) with region/genre params
-      if (results.length < 6) {
-        let discoverParams = { sort_by: 'popularity.desc', page: 1 };
-        if (config.media === 'movie') {
-          if (category === 'Hollywood') discoverParams.region = 'US';
-          else if (category === 'Bollywood') discoverParams.region = 'IN';
-          else if (category === 'Animation') discoverParams.with_genres = '16';
-        } else {
-          if (category === 'K-Drama') discoverParams.with_origin_country = 'KR';
-          else if (category === 'J-Drama') discoverParams.with_origin_country = 'JP';
-          else if (category === 'C-Drama') discoverParams.with_origin_country = 'CN';
-          else if (category === 'Tokusatsu') { discoverParams.with_origin_country = 'JP'; discoverParams.with_genres = '10759,10765'; }
-        }
+      let results = [];
+      // First try trending
+      let trending = await fetchTmdb(`trending/${config.media}/week`, { page: 1 });
+      if (config.filter) trending = trending.filter(config.filter);
+      if (trending.length >= 6) {
+        results = trending;
+      } else {
+        // Fallback to discover with category-specific params
+        const discoverParams = { sort_by: 'popularity.desc', page: 1, ...config.discover };
         const fallback = await fetchTmdb(`discover/${config.media}`, discoverParams);
-        results = fallback;
+        if (config.filter) results = fallback.filter(config.filter);
+        else results = fallback;
       }
-      // Limit to 18 items
       items = results.slice(0, 18).map(item => mapTmdbItem(item, config.media, config.label));
     }
     res.json({ category, items });
