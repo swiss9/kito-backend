@@ -8,9 +8,9 @@ app.use(cors());
 app.use(express.json());
 
 const TMDB_API_KEY = process.env.TMDB_API_KEY;
-if (!TMDB_API_KEY) console.warn('Missing TMDB_API_KEY');
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w300';
 const ANILIST_API = 'https://graphql.anilist.co';
+const MYDRAMALIST_API = 'https://mydramalist.com/api/v1';
 
 function getGradientClass(title) {
   const hash = title.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
@@ -35,6 +35,16 @@ function mapTmdbItem(item, mediaType, label) {
   const sub = `${label || mediaLabel} · ${yr}`;
   const cls = getGradientClass(title);
   const poster = item.poster_path ? `${TMDB_IMAGE_BASE}${item.poster_path}` : '';
+  return [title, sub, cls, Math.random() > 0.5, poster];
+}
+
+function mapMdlItem(item) {
+  const title = item.title || 'Unknown';
+  const year = item.year || item.release_date || '';
+  const yr = year ? year.toString().substring(0,4) : 'Latest';
+  const sub = `Series · ${yr}`;
+  const cls = getGradientClass(title);
+  const poster = item.image || item.poster || '';
   return [title, sub, cls, Math.random() > 0.5, poster];
 }
 
@@ -63,6 +73,17 @@ async function fetchTmdb(endpoint, params = {}) {
   return data.results || [];
 }
 
+async function fetchMdl(endpoint, params = {}) {
+  const url = new URL(`${MYDRAMALIST_API}/${endpoint}`);
+  for (let [key, val] of Object.entries(params)) {
+    if (val !== undefined && val !== null && val !== '') url.searchParams.set(key, val);
+  }
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.data || data.dramas || [];
+}
+
 const categoryMap = {
   Anime: { source: 'anilist', type: 'anime' },
   Manga: { source: 'anilist', type: 'manga' },
@@ -70,52 +91,39 @@ const categoryMap = {
     source: 'tmdb',
     media: 'movie',
     label: 'Hollywood',
-    // For Hollywood, first try global trending (which already has many US/English films) then fallback to discover
-    useTrendingFirst: true,
-    filter: item => item.original_language === 'en' || (item.origin_country && item.origin_country.includes('US')),
     discover: { region: 'US' }
   },
   Bollywood: {
     source: 'tmdb',
     media: 'movie',
     label: 'Bollywood',
-    useTrendingFirst: false,
     discover: { region: 'IN', with_original_language: 'hi' }
-  },
-  'K-Drama': {
-    source: 'tmdb',
-    media: 'tv',
-    label: 'K-Drama',
-    useTrendingFirst: false,
-    discover: { with_origin_country: 'KR' }
-  },
-  'J-Drama': {
-    source: 'tmdb',
-    media: 'tv',
-    label: 'J-Drama',
-    useTrendingFirst: false,
-    discover: { with_origin_country: 'JP' }
-  },
-  'C-Drama': {
-    source: 'tmdb',
-    media: 'tv',
-    label: 'C-Drama',
-    useTrendingFirst: false,
-    discover: { with_origin_country: 'CN' }
-  },
-  Tokusatsu: {
-    source: 'tmdb',
-    media: 'tv',
-    label: 'Tokusatsu',
-    useTrendingFirst: false,
-    discover: { with_origin_country: 'JP', with_genres: '10759,10765' }
   },
   Animation: {
     source: 'tmdb',
     media: 'movie',
     label: 'Animation',
-    useTrendingFirst: false,
     discover: { with_genres: '16', region: 'US' }
+  },
+  'K-Drama': {
+    source: 'mdl',
+    endpoint: 'dramas',
+    params: { country: 'South Korea', sort: 'popular' }
+  },
+  'J-Drama': {
+    source: 'mdl',
+    endpoint: 'dramas',
+    params: { country: 'Japan', sort: 'popular' }
+  },
+  'C-Drama': {
+    source: 'mdl',
+    endpoint: 'dramas',
+    params: { country: 'China', sort: 'popular' }
+  },
+  Tokusatsu: {
+    source: 'mdl',
+    endpoint: 'search',
+    params: { q: 'tokusatsu', sort: 'popular' }
   }
 };
 
@@ -141,29 +149,12 @@ app.get('/api/trending', async (req, res) => {
       const data = await fetchAniList(query, variables);
       items = (data.Page.media || []).map(item => mapAniListItem(item, config.type));
     } else if (config.source === 'tmdb') {
-      let results = [];
-      if (config.useTrendingFirst) {
-        // Try trending
-        let trending = await fetchTmdb(`trending/${config.media}/week`, { page: 1 });
-        if (config.filter) trending = trending.filter(config.filter);
-        if (trending.length >= 6) {
-          results = trending;
-        } else {
-          // Fallback to discover
-          const discoverParams = { sort_by: 'popularity.desc', page: 1, ...config.discover };
-          const fallback = await fetchTmdb(`discover/${config.media}`, discoverParams);
-          if (config.filter) results = fallback.filter(config.filter);
-          else results = fallback;
-        }
-      } else {
-        // Direct discover with popularity sort
-        const discoverParams = { sort_by: 'popularity.desc', page: 1, ...config.discover };
-        results = await fetchTmdb(`discover/${config.media}`, discoverParams);
-        // No need for extra filter because discover params already filter correctly
-        // But we might want to limit to 18
-        results = results.slice(0, 18);
-      }
+      const discoverParams = { sort_by: 'popularity.desc', page: 1, ...config.discover };
+      const results = await fetchTmdb(`discover/${config.media}`, discoverParams);
       items = results.slice(0, 18).map(item => mapTmdbItem(item, config.media, config.label));
+    } else if (config.source === 'mdl') {
+      const results = await fetchMdl(config.endpoint, config.params);
+      items = results.slice(0, 18).map(item => mapMdlItem(item));
     }
     res.json({ category, items });
   } catch (err) {
@@ -206,6 +197,12 @@ app.get('/api/search', async (req, res) => {
           const items = (data.results || []).slice(0, 5).map(item => mapTmdbItem(item, config.media));
           results.push(...items);
         }
+      } else if (config.source === 'mdl') {
+        const endpoint = 'search';
+        const params = { q, sort: 'popular' };
+        const items = await fetchMdl(endpoint, params);
+        const mapped = items.slice(0, 5).map(item => mapMdlItem(item));
+        results.push(...mapped);
       }
     }
     const seen = new Set();
@@ -272,6 +269,16 @@ app.get('/api/details', async (req, res) => {
             { label: '720p WebDL', badge: 'ALT', description: `Smaller encode - ${yr}`, magnet: `magnet:?xt=urn:btih:${title.replace(/\s/g,'_')}_720p` }
           ];
         }
+      }
+    } else if (source === 'mdl') {
+      const results = await fetchMdl('search', { q: title, sort: 'popular' });
+      const item = results?.[0];
+      if (item) {
+        description = item.synopsis || item.overview || 'No description.';
+        files = [
+          { label: 'Complete Series', badge: 'BATCH', description: `${item.title} - All episodes`, magnet: `magnet:?xt=urn:btih:${title.replace(/\s/g,'_')}_batch` },
+          { label: 'Season 1', badge: '720p', description: 'First season', magnet: `magnet:?xt=urn:btih:${title.replace(/\s/g,'_')}_s1` }
+        ];
       }
     }
     res.json({ title, description, files });
