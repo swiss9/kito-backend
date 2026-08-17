@@ -84,7 +84,7 @@ async function fetchTorrentClaw(title) {
   });
   if (TORRENTCLAW_API_KEY) params.append('apikey', TORRENTCLAW_API_KEY);
   const url = `${baseUrl}?${params.toString()}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { timeout: 8000 });
   if (!res.ok) throw new Error(`TorrentClaw: ${res.status}`);
   const data = await res.json();
   const results = data.results || data || [];
@@ -100,7 +100,7 @@ async function fetchTorrentClaw(title) {
 
 async function scrapeNyaa(title) {
   const searchUrl = `https://nyaa.si/?f=0&c=0_0&q=${encodeURIComponent(title)}`;
-  const res = await fetch(searchUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  const res = await fetch(searchUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' } });
   const html = await res.text();
   const cheerio = require('cheerio');
   const $ = cheerio.load(html);
@@ -123,8 +123,15 @@ async function scrapeNyaa(title) {
 
 async function scrape1337x(title) {
   const searchUrl = `https://1337x.to/search/${encodeURIComponent(title)}/1/`;
-  const res = await fetch(searchUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-  if (!res.ok) return [];
+  const res = await fetch(searchUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+  });
+  if (!res.ok) {
+    console.warn('1337x request failed:', res.status);
+    return [];
+  }
   const html = await res.text();
   const cheerio = require('cheerio');
   const $ = cheerio.load(html);
@@ -188,6 +195,7 @@ async function getTorrents(title, category, source = 'auto') {
         }
         if (torrents.length > 0) break;
       } catch (err) {
+        console.warn(`Source ${src} failed for ${title}:`, err.message);
         continue;
       }
     }
@@ -206,7 +214,11 @@ function filterBestTorrents(torrents) {
 
   const groups = {};
   torrents.forEach(t => {
-    const normalized = t.name.replace(/\[.*?\]/g, '').replace(/\(.*?\)/g, '').trim();
+    let normalized = t.name;
+    normalized = normalized.replace(/\[.*?\]/g, '');
+    normalized = normalized.replace(/\(.*?\)/g, '');
+    normalized = normalized.replace(/\b(1080p|720p|2160p|WEB-DL|WEBRip|BluRay|x264|x265|HEVC)\b/gi, '');
+    normalized = normalized.replace(/\s+/g, ' ').trim();
     if (!groups[normalized]) groups[normalized] = [];
     groups[normalized].push(t);
   });
