@@ -7,10 +7,10 @@
     "dev": "node --watch server.js"
   },
   "dependencies": {
-    "cheerio": "^1.0.0-rc.12",
+    "anitomy-js": "^4.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "torrent-search-api": "^2.1.4"
+    "xml2js": "^0.6.2"
   }
 }
