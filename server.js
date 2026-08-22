@@ -168,12 +168,13 @@ const TRUSTED_GROUPS = [
   'Yami', 'ZR'
 ];
 
-// ---------- Pure JS release name parser (no native modules) ----------
+// ---------- Pure JS release name parser (no circular calls) ----------
 function parseReleaseName(name) {
-  const episode = extractEpisodeNumber(name);
-  const season = extractSeasonNumberFromParsed(null, name);
+  const episode = extractEpisodeNumberFromName(name);
+  const season = extractSeasonNumberFromName(name);
   const releaseGroup = getReleaseGroup(name);
-  const resolution = parseQuality(name).label !== 'Unknown' ? parseQuality(name).label : null;
+  const qualityInfo = parseQuality(name);
+  const resolution = qualityInfo.label !== 'Unknown' ? qualityInfo.label : null;
   const source = parseSource(name);
   const title = extractReleaseTitle(name);
   return {
@@ -184,6 +185,53 @@ function parseReleaseName(name) {
     source: source,
     title: title
   };
+}
+
+function extractEpisodeNumberFromName(name) {
+  if (!name) return null;
+  let clean = name
+    .replace(/\[.*?\]|\(.*?\)/g, ' ')
+    .replace(/\b(2160p|1080p|720p|480p|360p|4k|8k)\b/gi, ' ')
+    .replace(/\b(19\d\d|20\d\d)\b/g, ' ');
+  const patterns = [
+    /[Ss](\d+)[Ee](\d+)/,
+    /[Ee]p(?:isode)?\s*(\d+)/i,
+    /[Ee](\d{2,3})(?![0-9])/,
+    /(?:^|\s)-?\s*(\d{1,3})\s*(?:$|\s)/,
+    /\[(\d+)\]/,
+    /\((\d+)\)/
+  ];
+  for (const pat of patterns) {
+    const match = clean.match(pat);
+    if (match) {
+      const num = parseInt(match[match.length - 1]);
+      if (num > 0 && num < 1000) return num;
+    }
+  }
+  return null;
+}
+
+function extractSeasonNumberFromName(name) {
+  if (!name) return null;
+  const clean = name.replace(/\[.*?\]|\(.*?\)/g, ' ');
+  const ordinalMatch = clean.match(/\b(\d+)(?:st|nd|rd|th)\s*season\b/i);
+  if (ordinalMatch) return parseInt(ordinalMatch[1]);
+  const romanMap = { 'II': 2, 'III': 3, 'IV': 4, 'V': 5, 'VI': 6 };
+  const romanMatch = clean.match(/\b(II|III|IV|V|VI)\b/);
+  if (romanMatch) return romanMap[romanMatch[1]];
+  const patterns = [
+    /[Ss](\d+)[Ee]\d+/,
+    /[Ss]eason\s*(\d+)/i,
+    /S(\d+)\s*Complete/i
+  ];
+  for (const pat of patterns) {
+    const match = clean.match(pat);
+    if (match) {
+      const s = parseInt(match[1]);
+      if (s > 0 && s < 100) return s;
+    }
+  }
+  return null;
 }
 
 function getReleaseGroup(name) {
@@ -315,57 +363,6 @@ async function searchEZTV(title) {
     leechers: t.leeches || 0,
     uploader: t.uploader || ''
   }));
-}
-
-function extractSeasonNumberFromParsed(parsed, name) {
-  if (parsed && parsed.season !== null) return parsed.season;
-  if (!name) return null;
-  const clean = name.replace(/\[.*?\]|\(.*?\)/g, ' ');
-  const ordinalMatch = clean.match(/\b(\d+)(?:st|nd|rd|th)\s*season\b/i);
-  if (ordinalMatch) return parseInt(ordinalMatch[1]);
-  const romanMap = { 'II': 2, 'III': 3, 'IV': 4, 'V': 5, 'VI': 6 };
-  const romanMatch = clean.match(/\b(II|III|IV|V|VI)\b/);
-  if (romanMatch) return romanMap[romanMatch[1]];
-  const patterns = [
-    /[Ss](\d+)[Ee]\d+/,
-    /[Ss]eason\s*(\d+)/i,
-    /S(\d+)\s*Complete/i
-  ];
-  for (const pat of patterns) {
-    const match = clean.match(pat);
-    if (match) {
-      const s = parseInt(match[1]);
-      if (s > 0 && s < 100) return s;
-    }
-  }
-  return null;
-}
-
-function extractEpisodeNumber(name) {
-  const parsed = parseReleaseName(name);
-  if (parsed.episodeNumber !== null) return parsed.episodeNumber;
-  if (!name) return null;
-  let clean = name
-    .replace(/\[.*?\]|\(.*?\)/g, ' ')
-    .replace(/\b(2160p|1080p|720p|480p|360p|4k|8k)\b/gi, ' ')
-    .replace(/\b(19\d\d|20\d\d)\b/g, ' ');
-  // Note: media titles stripping is done in caller
-  const patterns = [
-    /[Ss](\d+)[Ee](\d+)/,
-    /[Ee]p(?:isode)?\s*(\d+)/i,
-    /[Ee](\d{2,3})(?![0-9])/,
-    /(?:^|\s)-?\s*(\d{1,3})\s*(?:$|\s)/,
-    /\[(\d+)\]/,
-    /\((\d+)\)/
-  ];
-  for (const pat of patterns) {
-    const match = clean.match(pat);
-    if (match) {
-      const num = parseInt(match[match.length - 1]);
-      if (num > 0 && num < 1000) return num;
-    }
-  }
-  return null;
 }
 
 function extractEpisodeRange(name) {
@@ -512,7 +509,7 @@ function getMediaSeason(media) {
   const titles = [media.title, ...(media.aliases || [])];
   for (const t of titles) {
     const parsed = parseReleaseName(t);
-    const s = extractSeasonNumberFromParsed(parsed, t);
+    const s = parsed.season;
     if (s !== null) return s;
     const norm = normalizeTitle(t);
     const trailingDigitMatch = norm.match(/\s([2-9])$/);
@@ -546,7 +543,7 @@ function validateAndScoreRelease(release, media) {
   if (!titleMatch) return null;
 
   const mediaSeason = getMediaSeason(media);
-  const releaseSeason = extractSeasonNumberFromParsed(parsed, name) ?? 1;
+  const releaseSeason = parsed.season ?? 1;
 
   if (releaseSeason !== mediaSeason) {
     const relTitleNorm = normalizeTitle(extractReleaseTitle(name));
@@ -585,7 +582,7 @@ function validateAndScoreRelease(release, media) {
     episodeStart = range.start;
     episodeEnd = range.end;
   } else {
-    const ep = extractEpisodeNumber(name);
+    const ep = parsed.episodeNumber;
     episodeStart = ep;
     episodeEnd = ep;
   }
@@ -615,7 +612,7 @@ function validateAndScoreRelease(release, media) {
 
   const qualityInfo = parseQuality(name);
   const sourceType = parseSource(name);
-  const releaseGroup = getReleaseGroup(name);
+  const releaseGroup = parsed.releaseGroup || getReleaseGroup(name);
   const isTrusted = TRUSTED_GROUPS.some(g => releaseGroup && releaseGroup.toLowerCase().includes(g.toLowerCase()));
 
   let score = 0;
