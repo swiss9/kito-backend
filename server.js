@@ -814,6 +814,7 @@ app.get('/api/search', async (req, res) => {
     if (!q) return res.json({ query: q, category: categoryId, items: [], page, perPage, total: 0 });
     const categories = categoryId === 'any' ? getCategories() : [categoryId];
     let allResults = [];
+
     for (const catId of categories) {
       const config = getCategory(catId);
       if (!config) continue;
@@ -824,16 +825,6 @@ app.get('/api/search', async (req, res) => {
               pageInfo { hasNextPage }
               media(search: $search, type: $type) {
                 id title { romaji english native } synonyms seasonYear coverImage { medium large } format episodes chapters status genres
-                relations {
-                  edges {
-                    relationType
-                    node {
-                      id
-                      title { romaji english native }
-                      format
-                    }
-                  }
-                }
               }
             }
           }
@@ -842,13 +833,7 @@ app.get('/api/search', async (req, res) => {
         const variables = { search: q, type, page, perPage };
         const data = await fetchAniList(query, variables);
         const items = (data.Page.media || []).map(item => {
-          const relations = (item.relations?.edges || []).map(e => ({
-            id: e.node.id,
-            title: e.node.title?.romaji || e.node.title?.english || e.node.title?.native || '',
-            relationType: e.relationType,
-            format: e.node.format
-          }));
-          const media = normalizeAniListMedia(item, catId, relations);
+          const media = normalizeAniListMedia(item, catId, []); // no relations in search
           return mediaToCard(media);
         });
         allResults.push(...items);
@@ -889,23 +874,30 @@ app.get('/api/search', async (req, res) => {
         }
       }
     }
+
     const seen = new Set();
     const unique = allResults.filter(item => {
       if (seen.has(item.id)) return false;
       seen.add(item.id);
       return true;
     });
+
+    // Paginate the unique results
+    const start = (page - 1) * perPage;
+    const end = start + perPage;
+    const paginated = unique.slice(start, end);
+
     res.json({
       query: q,
       category: categoryId,
       page,
       perPage,
       total: unique.length,
-      items: unique
+      items: paginated
     });
   } catch (err) {
     console.error('Search error:', err);
-    res.status(500).json({ error: 'Search failed' });
+    res.status(500).json({ error: 'Search failed: ' + err.message });
   }
 });
 
@@ -913,7 +905,6 @@ app.get('/api/releases', async (req, res) => {
   try {
     const mediaId = req.query.id || '';
     const categoryId = req.query.category || 'anime';
-    // Quality filter removed – we ignore the parameter
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     if (!mediaId) return res.status(400).json({ error: 'Media ID required' });
