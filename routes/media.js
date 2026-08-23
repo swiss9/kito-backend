@@ -17,10 +17,13 @@ router.get('/releases', async (req, res) => {
     if (!mediaId) return res.status(400).json({ error: 'Media ID required' });
     const config = getCategory(categoryId);
     if (!config) return res.status(400).json({ error: 'Invalid category' });
-    const cacheKey = `releases:${mediaId}`;
+
+    // Include category in cache key to avoid cross-category contamination
+    const cacheKey = `releases:${categoryId}:${mediaId}`;
     const cached = getCached(cacheKey);
     let mediaObject = null;
     let releases = [];
+
     if (cached) {
       releases = cached.releases || [];
       mediaObject = cached.media || null;
@@ -53,10 +56,8 @@ router.get('/releases', async (req, res) => {
         rawMedia = data.Media;
         if (rawMedia && rawMedia.relations && rawMedia.relations.edges) {
           relations = rawMedia.relations.edges.map(e => ({
-            id: e.node.id,
-            title: e.node.title?.romaji || e.node.title?.english || e.node.title?.native || '',
             relationType: e.relationType,
-            format: e.node.format
+            node: e.node
           }));
         }
         if (rawMedia) mediaObject = normalizeAniListMedia(rawMedia, categoryId, relations);
@@ -72,6 +73,9 @@ router.get('/releases', async (req, res) => {
           if (rawMedia) mediaObject = normalizeJikanMedia(rawMedia, categoryId);
         }
       } else if (provider === 'tmdb') {
+        if (!process.env.TMDB_API_KEY) {
+          return res.status(503).json({ error: 'TMDB API key not configured' });
+        }
         const mediaType = config.mediaType === MediaType.MOVIE ? 'movie' : 'tv';
         const url = `https://api.themoviedb.org/3/${mediaType}/${providerId}?api_key=${process.env.TMDB_API_KEY}&language=en-US`;
         const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
@@ -86,6 +90,7 @@ router.get('/releases', async (req, res) => {
         setCache(cacheKey, { media: mediaObject, releases });
       }
     }
+
     if (!mediaObject) {
       return res.status(404).json({ error: 'Media not found' });
     }
