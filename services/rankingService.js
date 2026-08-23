@@ -118,7 +118,7 @@ function getForbiddenTitles(media) {
     }
   }
 
-  // Normalize media title: remove diacritics for accurate comparison
+  // Normalize media title: strip diacritics for accurate comparison
   const normalizedMediaTitle = normalizeTitle(media.title).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   for (const kw of SEQUEL_KEYWORDS) {
     const normalizedKw = normalizeTitle(kw).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -142,24 +142,28 @@ function getMediaSeason(media) {
 }
 
 function validateRelease(parsed, media) {
-  const releaseTitle = normalizeTitle(parsed.title || extractReleaseTitle(parsed.originalName));
-  const mediaTitles = [media.title, ...media.aliases].map(normalizeTitle);
+  // Normalize and remove accents from release title
+  const releaseTitle = normalizeTitle(parsed.title || extractReleaseTitle(parsed.originalName))
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const mediaTitles = [media.title, ...media.aliases]
+    .map(t => normalizeTitle(t).normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
   const forbiddenTitles = getForbiddenTitles(media);
 
+  // Title match: check if any media title appears as a substring in release title
   let titleMatch = false;
   for (const mt of mediaTitles) {
-    if (wordBoundaryMatch(releaseTitle, mt)) {
+    if (releaseTitle.includes(mt)) {
       titleMatch = true;
       break;
     }
   }
   if (!titleMatch) return { valid: false, reason: 'title_mismatch' };
 
+  // Season check (unchanged)
   const mediaSeason = getMediaSeason(media);
   const releaseSeason = parsed.season ?? 1;
-
   if (releaseSeason !== mediaSeason) {
-    const relTitleNorm = normalizeTitle(extractReleaseTitle(parsed.originalName));
+    const relTitleNorm = normalizeTitle(extractReleaseTitle(parsed.originalName)).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     if (mediaSeason === 1) {
       const seasonIndicators = [`s0?2`, `season 2`, `2nd season`];
       if (seasonIndicators.some(ind => new RegExp(`\\b${ind}\\b`, 'i').test(relTitleNorm))) {
@@ -177,6 +181,7 @@ function validateRelease(parsed, media) {
     }
   }
 
+  // Forbidden relation check (unchanged)
   for (const forb of forbiddenTitles) {
     if (!forb) continue;
     const forbRegex = new RegExp(`\\b${escapeRegex(forb)}\\b`, 'i');
@@ -188,6 +193,7 @@ function validateRelease(parsed, media) {
     }
   }
 
+  // Episode parsing (unchanged)
   const range = extractEpisodeRange(parsed.originalName);
   let episodeStart = null, episodeEnd = null;
   if (range) {
@@ -208,8 +214,10 @@ function validateRelease(parsed, media) {
 }
 
 function calculateConfidence(parsed, media) {
-  const releaseTitle = normalizeTitle(parsed.title || extractReleaseTitle(parsed.originalName));
-  const mediaTitles = [media.title, ...media.aliases].map(normalizeTitle);
+  const releaseTitle = normalizeTitle(parsed.title || extractReleaseTitle(parsed.originalName))
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const mediaTitles = [media.title, ...media.aliases]
+    .map(t => normalizeTitle(t).normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
   const exactTitleMatch = mediaTitles.some(mt => releaseTitle === mt);
   const isTrusted = TRUSTED_GROUPS.some(g => parsed.releaseGroup && parsed.releaseGroup.toLowerCase().includes(g.toLowerCase()));
   if (exactTitleMatch && isTrusted) return 'high';
