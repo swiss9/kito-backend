@@ -1,4 +1,5 @@
-const CACHE_TTL = 12 * 60 * 60 * 1000;
+const CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
+const MAX_CACHE_SIZE = 1000;
 const cache = new Map();
 
 function getCached(key) {
@@ -12,6 +13,10 @@ function getCached(key) {
 }
 
 function setCache(key, data) {
+  if (cache.size >= MAX_CACHE_SIZE) {
+    const firstKey = cache.keys().next().value;
+    if (firstKey) cache.delete(firstKey);
+  }
   cache.set(key, { data, timestamp: Date.now() });
 }
 
