@@ -39,7 +39,8 @@ router.get('/search', async (req, res) => {
             }
           `;
           const type = 'ANIME';
-          const variables = { search: q, type, page, perPage };
+          // Fetch first page with a higher perPage to get enough results for pagination
+          const variables = { search: q, type, page: 1, perPage: 50 };
           const data = await fetchAniList(query, variables);
           items = (data.Page.media || []).map(item => {
             const media = normalizeAniListMedia(item, catId, []);
@@ -63,9 +64,9 @@ router.get('/search', async (req, res) => {
 
         if (items.length === 0 && process.env.TMDB_API_KEY) {
           try {
-            let tmdbResults = await fetchTmdb('search/tv', { query: q, page });
+            let tmdbResults = await fetchTmdb('search/tv', { query: q, page: 1 });
             if (!tmdbResults.length) {
-              tmdbResults = await fetchTmdb('search/movie', { query: q, page });
+              tmdbResults = await fetchTmdb('search/movie', { query: q, page: 1 });
             }
             items = tmdbResults.map(item => {
               const media = normalizeTmdbMedia(item, catId);
@@ -81,7 +82,7 @@ router.get('/search', async (req, res) => {
       if (config.metadataProvider === 'tmdb' && process.env.TMDB_API_KEY) {
         try {
           const mediaType = config.mediaType === MediaType.MOVIE ? 'movie' : 'tv';
-          const params = { query: q, page };
+          const params = { query: q, page: 1 };
           if (catId === 'hollywood') params.region = 'US';
           else if (catId === 'bollywood') params.region = 'IN';
           const url = new URL(`https://api.themoviedb.org/3/search/${mediaType}`);
@@ -115,6 +116,7 @@ router.get('/search', async (req, res) => {
       }
     }
 
+    // Deduplicate across categories
     const seen = new Set();
     const unique = allResults.filter(item => {
       if (seen.has(item.id)) return false;
@@ -122,21 +124,24 @@ router.get('/search', async (req, res) => {
       return true;
     });
 
+    // Local pagination after aggregation
     const start = (page - 1) * perPage;
     const end = start + perPage;
     const paginated = unique.slice(start, end);
+    const total = unique.length;
 
     res.json({
       query: q,
       category: categoryId,
       page,
       perPage,
-      total: unique.length,
-      items: paginated
+      total,
+      items: paginated,
+      hasMore: end < total
     });
   } catch (err) {
     console.error('Search error:', err);
-    res.status(200).json({
+    res.status(500).json({
       query: req.query.q || '',
       category: req.query.category || 'any',
       page: parseInt(req.query.page) || 1,
