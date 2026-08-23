@@ -3,7 +3,7 @@ const { CoverageType, MediaType, SEQUEL_KEYWORDS, TRUSTED_GROUPS } = require('..
 
 function parseReleaseName(name) {
   const episode = extractEpisodeNumber(name);
-  const season = extractSeasonNumber(name);
+  const season = extractSeasonNumber(name, { hasEpisode: episode !== null });
   const releaseGroup = getReleaseGroup(name);
   const qualityInfo = parseQuality(name);
   const source = parseSource(name);
@@ -35,7 +35,7 @@ function extractEpisodeNumber(name) {
   return null;
 }
 
-function extractSeasonNumber(name) {
+function extractSeasonNumber(name, { hasEpisode = false } = {}) {
   if (!name) return null;
   const clean = name.replace(/\[.*?\]|\(.*?\)/g, ' ');
   const ordinalMatch = clean.match(/\b(\d+)(?:st|nd|rd|th)\s*season\b/i);
@@ -46,9 +46,12 @@ function extractSeasonNumber(name) {
   const patterns = [
     /[Ss](\d+)[Ee]\d+/,
     /[Ss]eason\s*(\d+)/i,
-    /S(\d+)\s*Complete/i,
-    /\b(\d+)$/
+    /S(\d+)\s*Complete/i
   ];
+  // Only use trailing number as season if no episode number was found
+  if (!hasEpisode) {
+    patterns.push(/\b(\d+)$/);
+  }
   for (const pat of patterns) {
     const match = clean.match(pat);
     if (match) {
@@ -118,7 +121,6 @@ function getForbiddenTitles(media) {
     }
   }
 
-  // Normalize media title: strip diacritics for accurate comparison
   const normalizedMediaTitle = normalizeTitle(media.title).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   for (const kw of SEQUEL_KEYWORDS) {
     const normalizedKw = normalizeTitle(kw).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -142,14 +144,12 @@ function getMediaSeason(media) {
 }
 
 function validateRelease(parsed, media) {
-  // Normalize and remove accents from release title
   const releaseTitle = normalizeTitle(parsed.title || extractReleaseTitle(parsed.originalName))
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const mediaTitles = [media.title, ...media.aliases]
     .map(t => normalizeTitle(t).normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
   const forbiddenTitles = getForbiddenTitles(media);
 
-  // Title match: check if any media title appears as a substring in release title
   let titleMatch = false;
   for (const mt of mediaTitles) {
     if (releaseTitle.includes(mt)) {
@@ -159,17 +159,15 @@ function validateRelease(parsed, media) {
   }
   if (!titleMatch) return { valid: false, reason: 'title_mismatch' };
 
-  // Season check (unchanged)
   const mediaSeason = getMediaSeason(media);
   const releaseSeason = parsed.season ?? 1;
   if (releaseSeason !== mediaSeason) {
-    const relTitleNorm = normalizeTitle(extractReleaseTitle(parsed.originalName)).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     if (mediaSeason === 1) {
-      const seasonIndicators = [`s0?2`, `season 2`, `2nd season`];
-      if (seasonIndicators.some(ind => new RegExp(`\\b${ind}\\b`, 'i').test(relTitleNorm))) {
-        return { valid: false, reason: 'season_mismatch' };
-      }
+      // For media season 1, any release with a different season is invalid
+      return { valid: false, reason: 'season_mismatch' };
     } else {
+      // For media season > 1, require explicit season indicator in release title
+      const relTitleNorm = normalizeTitle(extractReleaseTitle(parsed.originalName)).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
       const seasonRegex = new RegExp(`\\b(season\\s*0?${mediaSeason}|s0?${mediaSeason})\\b`, 'i');
       const romanMap = { 2: 'ii', 3: 'iii', 4: 'iv', 5: 'v' };
       const romanString = romanMap[mediaSeason] ? `\\b${romanMap[mediaSeason]}\\b` : null;
@@ -181,7 +179,6 @@ function validateRelease(parsed, media) {
     }
   }
 
-  // Forbidden relation check (unchanged)
   for (const forb of forbiddenTitles) {
     if (!forb) continue;
     const forbRegex = new RegExp(`\\b${escapeRegex(forb)}\\b`, 'i');
@@ -193,7 +190,6 @@ function validateRelease(parsed, media) {
     }
   }
 
-  // Episode parsing (unchanged)
   const range = extractEpisodeRange(parsed.originalName);
   let episodeStart = null, episodeEnd = null;
   if (range) {
