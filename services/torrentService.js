@@ -103,30 +103,52 @@ async function searchEZTV(title) {
   }));
 }
 
+// Simple concurrency limiter
+async function mapWithConcurrency(items, limit, fn) {
+  const results = [];
+  const executing = new Set();
+  for (const item of items) {
+    const p = Promise.resolve().then(() => fn(item));
+    results.push(p);
+    executing.add(p);
+    const clean = () => executing.delete(p);
+    p.then(clean, clean);
+    if (executing.size >= limit) {
+      await Promise.race(executing);
+    }
+  }
+  return Promise.all(results);
+}
+
 async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap) {
-  const tasks = [];
+  const allResults = [];
+
   for (const src of sourceList) {
     const searchFn = searchFnMap[src];
     if (!searchFn) continue;
-    for (const tier of queryTiers) {
-      for (const q of tier) {
-        tasks.push(
-          searchFn(q).catch(err => {
-            console.warn(`Source ${src} query "${q}" failed:`, err.message);
-            return [];
-          })
-        );
+
+    // Flatten tiers and deduplicate queries for this source
+    const queries = [...new Set(queryTiers.flat().filter(Boolean))];
+
+    const srcResults = await mapWithConcurrency(queries, 4, async (q) => {
+      try {
+        return await searchFn(q);
+      } catch (err) {
+        console.warn(`Source ${src} query "${q}" failed:`, err.message);
+        return [];
       }
-    }
+    });
+
+    allResults.push(...srcResults.flat());
   }
-  const resultsArray = await Promise.all(tasks);
-  const rawResults = resultsArray.flat();
-  const validated = rawResults
+
+  const validated = allResults
     .map(r => processRelease(r, media))
     .filter(r => r !== null);
+
   const hashMap = new Map();
   for (const r of validated) {
-    const hash = extractMagnetHash(r.magnet) || normalizeTitle(r.name);
+    const hash = extractMagnetHash(r.magnet) || `${normalizeTitle(r.name)}|${r.size}`;
     if (!hashMap.has(hash) || r.score > hashMap.get(hash).score) {
       hashMap.set(hash, r);
     }
@@ -136,20 +158,10 @@ async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap)
   return deduped;
 }
 
-// ---------- Anime search with expanded queries ----------
 async function searchAnimeReleases(media) {
-  // Collect all title variants (including normalized without diacritics)
   const allTitles = [media.title, ...(media.aliases || [])].map(t => t.replace(/[:]/g, '').trim());
   const normalizedTitles = allTitles.map(t => t.normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
   const combinedTitles = [...new Set([...allTitles, ...normalizedTitles])].filter(Boolean);
-
-  // If the title contains "shippuden" or "shippuuden", add explicit common variants
-  const lowerTitle = media.title.toLowerCase();
-  const extraQueries = [];
-  if (lowerTitle.includes('shippuden') || lowerTitle.includes('shippuuden')) {
-    extraQueries.push('Naruto Shippuden');
-    extraQueries.push('Naruto Shippuuden');
-  }
 
   const primary = combinedTitles[0] || media.title.replace(/[:]/g, '').trim();
   const baseTitle = stripSeasonInfo(primary);
@@ -160,9 +172,8 @@ async function searchAnimeReleases(media) {
     ? [`${baseTitle} S${seasonPad}`, `${baseTitle} Season ${mediaSeason}`]
     : [];
 
-  // Also try just "Naruto Shippuden" without accents even if title is "Naruto Shippūden"
-  // Already added via extraQueries, but also add baseTitle without diacritics
   const plainBase = baseTitle.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const extraQueries = [];
   if (plainBase !== baseTitle) {
     extraQueries.push(plainBase);
     extraQueries.push(`${plainBase} Batch`);
