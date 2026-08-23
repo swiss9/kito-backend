@@ -1,7 +1,7 @@
 const xml2js = require('xml2js');
 const { TORRENTCLAW_API_KEY } = require('../config');
-const { setCache, getCached, normalizeTitle, extractMagnetHash } = require('../utils');
-const { processRelease } = require('./rankingService');
+const { setCache, getCached, normalizeTitle, extractMagnetHash, stripSeasonInfo } = require('../utils');
+const { processRelease, getMediaSeason } = require('./rankingService');
 
 async function searchTorrentClaw(title) {
   const baseUrl = 'https://torrentclaw.com/api/search';
@@ -136,15 +136,24 @@ async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap)
   return deduped;
 }
 
+// ---------- Anime search with expanded queries ----------
 async function searchAnimeReleases(media) {
-  const { stripSeasonInfo } = require('../utils');
-  const { getMediaSeason } = require('./rankingService');
+  // Collect all title variants (including normalized without diacritics)
   const allTitles = [media.title, ...(media.aliases || [])].map(t => t.replace(/[:]/g, '').trim());
-  const uniqueTitles = [...new Set(allTitles)].filter(Boolean);
-  const primary = uniqueTitles[0] || media.title.replace(/[:]/g, '').trim();
-  const baseTitle = stripSeasonInfo(primary);
-  const others = uniqueTitles.slice(1);
+  const normalizedTitles = allTitles.map(t => t.normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+  const combinedTitles = [...new Set([...allTitles, ...normalizedTitles])].filter(Boolean);
 
+  // If the title contains "shippuden" or "shippuuden", add explicit common variants
+  const lowerTitle = media.title.toLowerCase();
+  const extraQueries = [];
+  if (lowerTitle.includes('shippuden') || lowerTitle.includes('shippuuden')) {
+    extraQueries.push('Naruto Shippuden');
+    extraQueries.push('Naruto Shippuuden');
+  }
+
+  const primary = combinedTitles[0] || media.title.replace(/[:]/g, '').trim();
+  const baseTitle = stripSeasonInfo(primary);
+  const others = combinedTitles.slice(1);
   const mediaSeason = getMediaSeason(media);
   const seasonPad = String(mediaSeason).padStart(2, '0');
   const seasonQueries = mediaSeason > 1
@@ -155,7 +164,8 @@ async function searchAnimeReleases(media) {
     [primary],
     others.length ? others : [],
     seasonQueries.length ? seasonQueries : [],
-    [`${baseTitle} Batch`]
+    [`${baseTitle} Batch`],
+    extraQueries.length ? extraQueries : []
   ].filter(tier => tier.length > 0);
 
   const sourceList = ['nyaa_rss', 'torrentclaw'];
@@ -168,9 +178,10 @@ async function searchAnimeReleases(media) {
 
 async function searchMovieReleases(media) {
   const allTitles = [media.title, ...(media.aliases || [])].map(t => t.replace(/[:]/g, '').trim());
-  const uniqueTitles = [...new Set(allTitles)].filter(Boolean);
-  const primary = uniqueTitles[0] || media.title.replace(/[:]/g, '').trim();
-  const others = uniqueTitles.slice(1);
+  const normalizedTitles = allTitles.map(t => t.normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+  const combinedTitles = [...new Set([...allTitles, ...normalizedTitles])].filter(Boolean);
+  const primary = combinedTitles[0] || media.title.replace(/[:]/g, '').trim();
+  const others = combinedTitles.slice(1);
   const queryTiers = [
     [primary],
     others.length ? others : [],
@@ -185,13 +196,12 @@ async function searchMovieReleases(media) {
 }
 
 async function searchSeriesReleases(media) {
-  const { stripSeasonInfo } = require('../utils');
-  const { getMediaSeason } = require('./rankingService');
   const allTitles = [media.title, ...(media.aliases || [])].map(t => t.replace(/[:]/g, '').trim());
-  const uniqueTitles = [...new Set(allTitles)].filter(Boolean);
-  const primary = uniqueTitles[0] || media.title.replace(/[:]/g, '').trim();
+  const normalizedTitles = allTitles.map(t => t.normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+  const combinedTitles = [...new Set([...allTitles, ...normalizedTitles])].filter(Boolean);
+  const primary = combinedTitles[0] || media.title.replace(/[:]/g, '').trim();
   const baseTitle = stripSeasonInfo(primary);
-  const others = uniqueTitles.slice(1);
+  const others = combinedTitles.slice(1);
 
   const mediaSeason = getMediaSeason(media);
   const seasonPad = String(mediaSeason).padStart(2, '0');
