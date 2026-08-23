@@ -15,4 +15,12 @@ app.use('/api', mediaRoutes);
 
 app.get('/', (req, res) => res.send('KITO API running on Vercel.'));
 
+// Start server locally when not in serverless environment
+if (require.main === module) {
+  const port = process.env.PORT || 3000;
+  app.listen(port, () => {
+    console.log(`KITO API listening on port ${port}`);
+  });
+}
+
 module.exports = app;
