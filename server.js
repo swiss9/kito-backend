@@ -32,7 +32,7 @@ function setCache(key, data) {
   cache.set(key, { data, timestamp: Date.now() });
 }
 
-// ---------- Helpers (same as before) ----------
+// ---------- Helpers ----------
 function normalizeTitle(title) {
   return title
     .toLowerCase()
@@ -191,11 +191,21 @@ function normalizeJikanMedia(item, categoryId) {
   if (item.title_english) aliases.push(item.title_english);
   if (item.title_japanese) aliases.push(item.title_japanese);
   if (item.synonyms) aliases.push(...item.synonyms);
+
+  let poster = '';
+  if (item.images?.jpg) {
+    poster = item.images.jpg.large_image_url || item.images.jpg.image_url;
+  } else if (item.images?.webp) {
+    poster = item.images.webp.large_image_url || item.images.webp.image_url;
+  }
+  if (poster && poster.startsWith('http://')) poster = poster.replace('http://', 'https://');
+
   const statusMap = {
     'Finished Airing': 'FINISHED',
     'Currently Airing': 'RELEASING',
     'Not yet aired': 'NOT_YET_RELEASED'
   };
+
   return {
     id: `jikan:${item.mal_id}`,
     title: item.title_english || item.title || item.title_japanese || 'Unknown',
@@ -204,7 +214,7 @@ function normalizeJikanMedia(item, categoryId) {
     mediaType: mediaType,
     episodeCount: item.episodes || null,
     status: statusMap[item.status] || item.status || 'UNKNOWN',
-    poster: item.images?.jpg?.large_image_url || item.images?.jpg?.image_url || '',
+    poster: poster || '',
     genres: item.genres?.map(g => g.name) || [],
     provider: 'jikan',
     providerId: item.mal_id,
@@ -213,7 +223,7 @@ function normalizeJikanMedia(item, categoryId) {
   };
 }
 
-// ---------- Torrent sources (unchanged) ----------
+// ---------- Torrent sources ----------
 async function searchTorrentClaw(title) {
   const baseUrl = 'https://torrentclaw.com/api/search';
   const params = new URLSearchParams({ q: title, category: 'all', limit: 100 });
@@ -314,7 +324,6 @@ async function searchEZTV(title) {
   }));
 }
 
-// ---------- Release parsing (unchanged) ----------
 function extractEpisodeRange(name) {
   const clean = name.replace(/\[.*?\]|\(.*?\)/g, ' ');
   const patterns = [
@@ -384,6 +393,8 @@ function normalizeAniListMedia(item, categoryId, relations = []) {
     item.title?.native,
     ...(item.synonyms || [])
   ].filter(Boolean);
+  let poster = item.coverImage?.large || item.coverImage?.medium || '';
+  if (poster && poster.startsWith('http://')) poster = poster.replace('http://', 'https://');
   return {
     id: `anilist:${item.id}`,
     title: item.title?.romaji || item.title?.english || item.title?.native || 'Unknown',
@@ -392,7 +403,7 @@ function normalizeAniListMedia(item, categoryId, relations = []) {
     mediaType: item.format === 'MOVIE' ? 'movie' : 'series',
     episodeCount: item.episodes || null,
     status: item.status || 'UNKNOWN',
-    poster: item.coverImage?.large || item.coverImage?.medium || '',
+    poster: poster,
     genres: item.genres || [],
     provider: 'anilist',
     providerId: item.id,
@@ -408,6 +419,8 @@ function normalizeAniListMedia(item, categoryId, relations = []) {
 
 function normalizeTmdbMedia(item, categoryId) {
   const isMovie = item.media_type === 'movie' || item.release_date;
+  let poster = item.poster_path ? `${TMDB_IMAGE_BASE}${item.poster_path}` : '';
+  if (poster && poster.startsWith('http://')) poster = poster.replace('http://', 'https://');
   return {
     id: `tmdb:${item.id}`,
     title: item.title || item.name || 'Unknown',
@@ -416,7 +429,7 @@ function normalizeTmdbMedia(item, categoryId) {
     mediaType: isMovie ? 'movie' : 'series',
     episodeCount: null,
     status: item.status || 'UNKNOWN',
-    poster: item.poster_path ? `${TMDB_IMAGE_BASE}${item.poster_path}` : '',
+    poster: poster,
     genres: item.genre_ids || [],
     provider: 'tmdb',
     providerId: item.id,
@@ -498,7 +511,7 @@ const categoryConfig = {
 function getCategory(id) { return categoryConfig[id] || null; }
 function getCategories() { return Object.keys(categoryConfig); }
 
-// ---------- Release validation & scoring (unchanged) ----------
+// ---------- Release validation & scoring ----------
 function getForbiddenRelationTitles(media) {
   const forbidden = [];
   if (media.relations) {
@@ -1009,7 +1022,6 @@ app.get('/api/releases', async (req, res) => {
         }
         if (rawMedia) mediaObject = normalizeAniListMedia(rawMedia, categoryId, relations);
       } else if (provider === 'jikan') {
-        // For Jikan, fetch details
         const jikanUrl = `https://api.jikan.moe/v4/anime/${providerId}`;
         const apiRes = await fetch(jikanUrl, {
           headers: { 'User-Agent': 'KITO/1.0' },
