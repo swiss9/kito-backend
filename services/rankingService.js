@@ -117,9 +117,12 @@ function getForbiddenTitles(media) {
       }
     }
   }
-  const mediaTitleLower = media.title.toLowerCase();
+  // Normalize media title to compare against sequel keywords
+  const normalizedMediaTitle = normalizeTitle(media.title);
   for (const kw of SEQUEL_KEYWORDS) {
-    if (!mediaTitleLower.includes(kw) && !forbidden.some(f => f.toLowerCase().includes(kw))) {
+    const normalizedKw = normalizeTitle(kw);
+    // Only add keyword if it's not already part of the media's own title
+    if (!normalizedMediaTitle.includes(normalizedKw) && !forbidden.some(f => normalizeTitle(f).includes(normalizedKw))) {
       forbidden.push(kw);
     }
   }
@@ -174,6 +177,7 @@ function validateRelease(parsed, media) {
     }
   }
 
+  // Forbidden relation check: use normalized comparison
   for (const forb of forbiddenTitles) {
     if (!forb) continue;
     const forbRegex = new RegExp(`\\b${escapeRegex(forb)}\\b`, 'i');
