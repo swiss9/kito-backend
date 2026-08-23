@@ -117,12 +117,12 @@ function getForbiddenTitles(media) {
       }
     }
   }
-  // Normalize media title to compare against sequel keywords
-  const normalizedMediaTitle = normalizeTitle(media.title);
+
+  // Normalize media title: remove diacritics for accurate comparison
+  const normalizedMediaTitle = normalizeTitle(media.title).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   for (const kw of SEQUEL_KEYWORDS) {
-    const normalizedKw = normalizeTitle(kw);
-    // Only add keyword if it's not already part of the media's own title
-    if (!normalizedMediaTitle.includes(normalizedKw) && !forbidden.some(f => normalizeTitle(f).includes(normalizedKw))) {
+    const normalizedKw = normalizeTitle(kw).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    if (!normalizedMediaTitle.includes(normalizedKw) && !forbidden.some(f => normalizeTitle(f).normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(normalizedKw))) {
       forbidden.push(kw);
     }
   }
@@ -177,7 +177,6 @@ function validateRelease(parsed, media) {
     }
   }
 
-  // Forbidden relation check: use normalized comparison
   for (const forb of forbiddenTitles) {
     if (!forb) continue;
     const forbRegex = new RegExp(`\\b${escapeRegex(forb)}\\b`, 'i');
