@@ -279,6 +279,7 @@ function processRelease(rawRelease, media) {
   const score = calculateScore(parsed, coverageType, coveragePercent, media);
 
   return {
+    name: rawRelease.name,
     ...parsed,
     episodeStart,
     episodeEnd,
