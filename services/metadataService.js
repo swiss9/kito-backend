@@ -33,7 +33,7 @@ async function fetchTmdb(endpoint, params = {}) {
 
 async function searchJikan(query) {
   const normalized = query.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-  const url = `https://api.jikan.moe/v4/anime?q=${encodeURIComponent(normalized)}&limit=20`;
+  const url = `https://api.jikan.moe/v4/anime?q=${encodeURIComponent(normalized)}&limit=50`;
   const res = await fetch(url, {
     headers: { 'User-Agent': 'KITO/1.0 (https://kito.app)' },
     signal: AbortSignal.timeout(8000)
@@ -67,7 +67,9 @@ function normalizeAniListMedia(item, categoryId, relations = []) {
     category: categoryId,
     relations: relations.map(r => ({
       id: r.id,
-      title: r.title?.romaji || r.title?.english || r.title?.native || '',
+      title: typeof r.title === 'string'
+        ? r.title
+        : (r.title?.romaji || r.title?.english || r.title?.native || ''),
       relationType: r.relationType,
       format: r.format
     }))
