@@ -160,6 +160,14 @@ async function searchAnimeReleases(media) {
     ? [`${baseTitle} S${seasonPad}`, `${baseTitle} Season ${mediaSeason}`]
     : [];
 
+  // Also try just "Naruto Shippuden" without accents even if title is "Naruto Shippūden"
+  // Already added via extraQueries, but also add baseTitle without diacritics
+  const plainBase = baseTitle.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (plainBase !== baseTitle) {
+    extraQueries.push(plainBase);
+    extraQueries.push(`${plainBase} Batch`);
+  }
+
   const queryTiers = [
     [primary],
     others.length ? others : [],
