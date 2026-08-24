@@ -29,10 +29,22 @@ function normalizeTitle(title) {
 }
 
 function stripSeasonInfo(title) {
-  return normalizeTitle(title)
-    .replace(/\b(s\d+|season\s*\d+|\d+(st|nd|rd|th)\s*season|part\s*\d+)\b/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const normalized = normalizeTitle(title);
+  const seasonPatterns = [
+    /\b(s\d+)\b/i,
+    /\b(season\s*\d+)\b/i,
+    /\b(\d+(st|nd|rd|th)\s*season)\b/i,
+    /\b(part\s*\d+)\b/i,
+    /\b(second season|third season|fourth season|fifth season|sixth season|seventh season|eighth season|ninth season|tenth season)\b/i,
+    /\b(\d+)\s*(?:st|nd|rd|th)\s*season\b/i,
+    /\b(season\s*(one|two|three|four|five|six|seven|eight|nine|ten))\b/i,
+    /\b(cour\s*\d+)\b/i
+  ];
+  let result = normalized;
+  for (const pattern of seasonPatterns) {
+    result = result.replace(pattern, ' ');
+  }
+  return result.replace(/\s+/g, ' ').trim();
 }
 
 function extractReleaseTitle(name) {
