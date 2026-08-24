@@ -3,9 +3,108 @@ const router = express.Router();
 const { categoryConfig } = require('../config');
 const { fetchAniList, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia, mediaToCard } = require('../services/metadataService');
 const { MediaType } = require('../config');
+const { stripSeasonInfo } = require('../utils');
 
 function getCategories() { return Object.keys(categoryConfig); }
 function getCategory(id) { return categoryConfig[id] || null; }
+
+function extractSeasonFromTitle(title) {
+  if (!title) return null;
+  const clean = title.replace(/\[.*?\]|\(.*?\)/g, ' ');
+  const ordinalMatch = clean.match(/\b(\d+)(?:st|nd|rd|th)\s*season\b/i);
+  if (ordinalMatch) return parseInt(ordinalMatch[1]);
+  const romanMap = { 'II': 2, 'III': 3, 'IV': 4, 'V': 5, 'VI': 6 };
+  const romanMatch = clean.match(/\b(II|III|IV|V|VI)\b/);
+  if (romanMatch) return romanMap[romanMatch[1]];
+  const patterns = [
+    /[Ss]eason\s*(\d+)/i,
+    /S(\d+)\s*Complete/i,
+    /\b(\d+)$/
+  ];
+  for (const pat of patterns) {
+    const match = clean.match(pat);
+    if (match) {
+      const s = parseInt(match[1]);
+      if (s > 0 && s < 100) return s;
+    }
+  }
+  return null;
+}
+
+function removeSeasonInfoFromTitle(title) {
+  if (!title) return '';
+  return title
+    .replace(/\b(\d+)(?:st|nd|rd|th)\s*season\b/gi, '')
+    .replace(/\bseason\s*\d+\b/gi, '')
+    .replace(/\bS\d+\b/gi, '')
+    .replace(/\bpart\s*\d+\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function groupByFranchise(items) {
+  const groups = {};
+  for (const item of items) {
+    const base = stripSeasonInfo(item.title);
+    if (!base) continue;
+    if (!groups[base]) groups[base] = [];
+    groups[base].push(item);
+  }
+
+  const results = [];
+  for (const base in groups) {
+    const seasons = groups[base];
+    if (seasons.length === 1) {
+      results.push(seasons[0]);
+      continue;
+    }
+
+    seasons.sort((a, b) => {
+      const sa = extractSeasonFromTitle(a.title) ?? 1;
+      const sb = extractSeasonFromTitle(b.title) ?? 1;
+      return sa - sb;
+    });
+
+    const first = seasons[0];
+    const cleanTitle = removeSeasonInfoFromTitle(first.title) || first.title;
+    const years = seasons.map(s => s.year).filter(Boolean);
+    const minYear = years.length ? Math.min(...years) : null;
+    const maxYear = years.length ? Math.max(...years) : null;
+    const poster = seasons.find(s => s.poster)?.poster || first.poster;
+    const provider = first.provider;
+    const providerId = first.providerId;
+    const aliases = [...new Set(seasons.flatMap(s => s.aliases || []))];
+
+    results.push({
+      id: `franchise:${base}`,
+      title: cleanTitle,
+      aliases,
+      subtitle: `${seasons.length} seasons${minYear ? ` · ${minYear}${maxYear && maxYear !== minYear ? '–' + maxYear : ''}` : ''}`,
+      category: first.category,
+      mediaType: 'collection',
+      year: minYear,
+      episodeCount: null,
+      poster,
+      provider,
+      providerId,
+      hasRelease: false,
+      hasBatch: false,
+      collection: true,
+      seasons: seasons.map(s => ({
+        id: s.id,
+        title: s.title,
+        subtitle: s.subtitle,
+        year: s.year,
+        poster: s.poster,
+        seasonNumber: extractSeasonFromTitle(s.title) ?? 1,
+        provider: s.provider,
+        providerId: s.providerId,
+        category: s.category
+      }))
+    });
+  }
+  return results;
+}
 
 router.get('/search', async (req, res) => {
   try {
@@ -13,6 +112,7 @@ router.get('/search', async (req, res) => {
     const categoryId = req.query.category || 'any';
     const page = parseInt(req.query.page) || 1;
     const perPage = parseInt(req.query.perPage) || 20;
+    const group = req.query.group === 'true';
 
     if (!q) {
       return res.json({ query: q, category: categoryId, items: [], page, perPage, total: 0 });
@@ -39,7 +139,6 @@ router.get('/search', async (req, res) => {
             }
           `;
           const type = 'ANIME';
-          // Fetch first page with a higher perPage to get enough results for pagination
           const variables = { search: q, type, page: 1, perPage: 50 };
           const data = await fetchAniList(query, variables);
           items = (data.Page.media || []).map(item => {
@@ -116,15 +215,24 @@ router.get('/search', async (req, res) => {
       }
     }
 
-    // Deduplicate across categories
-    const seen = new Set();
-    const unique = allResults.filter(item => {
-      if (seen.has(item.id)) return false;
-      seen.add(item.id);
-      return true;
-    });
+    let unique = [];
+    if (group) {
+      unique = groupByFranchise(allResults);
+      const seen = new Set();
+      unique = unique.filter(item => {
+        if (seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      });
+    } else {
+      const seen = new Set();
+      unique = allResults.filter(item => {
+        if (seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      });
+    }
 
-    // Local pagination after aggregation
     const start = (page - 1) * perPage;
     const end = start + perPage;
     const paginated = unique.slice(start, end);
