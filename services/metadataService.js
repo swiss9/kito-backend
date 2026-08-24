@@ -191,6 +191,7 @@ function mediaToCard(media) {
     poster: media.poster,
     provider: media.provider,
     providerId: media.providerId,
+    status: media.status,
     hasRelease: false,
     hasBatch: false
   };
