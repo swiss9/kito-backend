@@ -75,7 +75,6 @@ function groupByFranchise(items) {
     const providerId = first.providerId;
     const aliases = [...new Set(seasons.flatMap(s => s.aliases || []))];
 
-    // Deduplicate seasons by ID
     const uniqueSeasons = [];
     const seenIds = new Set();
     for (const s of seasons) {
@@ -225,7 +224,7 @@ router.get('/search', async (req, res) => {
       }
     }
 
-    // Filter out unreleased entries before grouping/dedup
+    // Filter out unreleased entries
     allResults = allResults.filter(item => item.status !== 'NOT_YET_RELEASED');
 
     let unique = [];
@@ -237,6 +236,25 @@ router.get('/search', async (req, res) => {
         seen.add(item.id);
         return true;
       });
+
+      // Hide individual movie entries when a collection for the same franchise exists
+      const collections = unique.filter(item => item.collection);
+      const nonCollections = unique.filter(item => !item.collection);
+
+      const filteredNonCollections = nonCollections.filter(item => {
+        if (item.mediaType === MediaType.MOVIE) {
+          const movieTitle = item.title.toLowerCase();
+          return !collections.some(c => {
+            const base = c.title.toLowerCase();
+            return movieTitle === base ||
+                   movieTitle.startsWith(base + ' ') ||
+                   movieTitle.startsWith(base + ':');
+          });
+        }
+        return true;
+      });
+
+      unique = [...collections, ...filteredNonCollections];
     } else {
       const seen = new Set();
       unique = allResults.filter(item => {
