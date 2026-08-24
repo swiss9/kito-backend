@@ -30,7 +30,7 @@ function normalizeTitle(title) {
 
 function stripSeasonInfo(title) {
   return normalizeTitle(title)
-    .replace(/\b(s\d+|season \d+|\d+(st|nd|rd|th) season|part \d+)\b/gi, '')
+    .replace(/\b(s\d+|season\s*\d+|\d+(st|nd|rd|th)\s*season|part\s*\d+)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
