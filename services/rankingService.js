@@ -39,12 +39,33 @@ function extractEpisodeNumber(name) {
 
 function extractSeasonNumber(name, { hasEpisode = false } = {}) {
   if (!name) return null;
+  const romanMap = { 'II': 2, 'III': 3, 'IV': 4, 'V': 5, 'VI': 6 };
+
+  const originalPatterns = [
+    /\b(\d+)(?:st|nd|rd|th)\s*season\b/i,
+    /\bseason\s*(\d+)\b/i,
+    /\bs(\d+)\b/i,
+    /\bpart\s*(\d+)\b/i,
+    /\b(II|III|IV|V|VI)\b/
+  ];
+
+  for (const pat of originalPatterns) {
+    const match = name.match(pat);
+    if (match) {
+      if (pat === originalPatterns[4]) {
+        return romanMap[match[1].toUpperCase()] || null;
+      }
+      const num = parseInt(match[1]);
+      if (num > 0 && num < 100) return num;
+    }
+  }
+
   const clean = name.replace(/\[.*?\]|\(.*?\)/g, ' ');
   const ordinalMatch = clean.match(/\b(\d+)(?:st|nd|rd|th)\s*season\b/i);
   if (ordinalMatch) return parseInt(ordinalMatch[1]);
-  const romanMap = { 'II': 2, 'III': 3, 'IV': 4, 'V': 5, 'VI': 6 };
   const romanMatch = clean.match(/\b(II|III|IV|V|VI)\b/);
   if (romanMatch) return romanMap[romanMatch[1]];
+
   const patterns = [
     /[Ss](\d+)[Ee]\d+/,
     /[Ss]eason\s*(\d+)/i,
