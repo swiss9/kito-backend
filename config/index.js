@@ -36,30 +36,6 @@ const categoryConfig = {
     mediaType: MediaType.SERIES,
     torrentSources: ['nyaa_rss', 'torrentclaw']
   },
-  hollywood: {
-    id: 'hollywood',
-    metadataProvider: 'tmdb',
-    mediaType: MediaType.MOVIE,
-    torrentSources: ['yts', 'torrentclaw']
-  },
-  bollywood: {
-    id: 'bollywood',
-    metadataProvider: 'tmdb',
-    mediaType: MediaType.MOVIE,
-    torrentSources: ['yts', 'torrentclaw']
-  },
-  animation: {
-    id: 'animation',
-    metadataProvider: 'tmdb',
-    mediaType: MediaType.MOVIE,
-    torrentSources: ['yts', 'torrentclaw']
-  },
-  asian: {
-    id: 'asian',
-    metadataProvider: 'tmdb',
-    mediaType: MediaType.SERIES,
-    torrentSources: ['eztv', 'torrentclaw']
-  },
   tokusatsu: {
     id: 'tokusatsu',
     metadataProvider: 'tmdb',
