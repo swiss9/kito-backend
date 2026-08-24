@@ -223,30 +223,26 @@ router.get('/search', async (req, res) => {
       }
     }
 
-    // Filter out unreleased entries
     allResults = allResults.filter(item => item.status !== 'NOT_YET_RELEASED');
 
     let unique = [];
     if (group) {
-      const seriesItems = allResults.filter(item => item.mediaType === MediaType.SERIES);
-      const movieItems = allResults.filter(item => item.mediaType === MediaType.MOVIE);
+      const animeSeries = allResults.filter(item => item.mediaType === MediaType.SERIES && item.category === 'anime');
+      const otherItems = allResults.filter(item => !(item.mediaType === MediaType.SERIES && item.category === 'anime'));
 
-      const groupedSeries = groupByFranchise(seriesItems);
-      const collections = groupedSeries.filter(item => item.collection);
-      const standaloneSeries = groupedSeries.filter(item => !item.collection);
+      const groupedAnime = groupByFranchise(animeSeries);
+      const collections = groupedAnime.filter(item => item.collection);
+      const standaloneAnime = groupedAnime.filter(item => !item.collection);
 
-      // Gather all IDs that are part of collections
       const collectionSeasonIds = new Set();
       collections.forEach(c => {
         c.seasons.forEach(s => collectionSeasonIds.add(s.id));
       });
 
-      // Remove individual series entries that are already covered by a collection
-      const filteredStandaloneSeries = standaloneSeries.filter(item => !collectionSeasonIds.has(item.id));
+      const filteredStandaloneAnime = standaloneAnime.filter(item => !collectionSeasonIds.has(item.id));
 
-      unique = [...collections, ...filteredStandaloneSeries, ...movieItems];
+      unique = [...collections, ...filteredStandaloneAnime, ...otherItems];
 
-      // Remove duplicate IDs
       const seen = new Set();
       unique = unique.filter(item => {
         if (seen.has(item.id)) return false;
@@ -254,7 +250,6 @@ router.get('/search', async (req, res) => {
         return true;
       });
 
-      // Hide individual movies that are part of a franchise collection
       const finalCollections = unique.filter(item => item.collection);
       const finalNonCollections = unique.filter(item => !item.collection);
 
