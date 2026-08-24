@@ -5,6 +5,11 @@ const { MediaType } = require('../config');
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w300';
 const ANILIST_API = 'https://graphql.anilist.co';
 
+function stripYearFromTitle(title) {
+  if (!title) return '';
+  return title.replace(/\s*\(\d{4}\)$/, '').trim();
+}
+
 async function fetchAniList(query, variables) {
   const res = await fetch(ANILIST_API, {
     method: 'POST',
@@ -50,8 +55,16 @@ function normalizeAniListMedia(item, categoryId, relations = []) {
     item.title?.native,
     ...(item.synonyms || [])
   ].filter(Boolean);
+
+  const baseTitle = item.title?.romaji || item.title?.english || '';
+  const strippedTitle = stripYearFromTitle(baseTitle);
+  if (strippedTitle && strippedTitle !== baseTitle) {
+    aliases.push(strippedTitle);
+  }
+
   let poster = item.coverImage?.large || item.coverImage?.medium || '';
   if (poster && poster.startsWith('http://')) poster = poster.replace('http://', 'https://');
+
   return {
     id: `anilist:${item.id}`,
     title: item.title?.romaji || item.title?.english || item.title?.native || 'Unknown',
@@ -65,6 +78,7 @@ function normalizeAniListMedia(item, categoryId, relations = []) {
     provider: 'anilist',
     providerId: item.id,
     category: categoryId,
+    format: item.format,
     relations: relations.map(r => ({
       id: r.id,
       title: typeof r.title === 'string'
@@ -113,6 +127,7 @@ function normalizeJikanMedia(item, categoryId) {
     provider: 'jikan',
     providerId: item.mal_id,
     category: categoryId,
+    format: type,
     relations: []
   };
 }
@@ -134,6 +149,7 @@ function normalizeTmdbMedia(item, categoryId) {
     provider: 'tmdb',
     providerId: item.id,
     category: categoryId,
+    format: isMovie ? 'MOVIE' : 'TV',
     relations: []
   };
 }
