@@ -1,6 +1,8 @@
 const { normalizeTitle, extractReleaseTitle, escapeRegex, wordBoundaryMatch, getReleaseGroup } = require('../utils');
 const { CoverageType, MediaType, SEQUEL_KEYWORDS, TRUSTED_GROUPS } = require('../config');
 
+const FORMAT_KEYWORDS = new Set(['movie', 'film', 'ova', 'special']);
+
 function parseReleaseName(name) {
   const episode = extractEpisodeNumber(name);
   const season = extractSeasonNumber(name, { hasEpisode: episode !== null });
@@ -48,7 +50,6 @@ function extractSeasonNumber(name, { hasEpisode = false } = {}) {
     /[Ss]eason\s*(\d+)/i,
     /S(\d+)\s*Complete/i
   ];
-  // Only use trailing number as season if no episode number was found
   if (!hasEpisode) {
     patterns.push(/\b(\d+)$/);
   }
@@ -122,8 +123,16 @@ function getForbiddenTitles(media) {
   }
 
   const normalizedMediaTitle = normalizeTitle(media.title).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const mediaFormat = (media.format || '').toUpperCase();
+
   for (const kw of SEQUEL_KEYWORDS) {
     const normalizedKw = normalizeTitle(kw).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+    if (FORMAT_KEYWORDS.has(kw)) {
+      const isSpecialFormat = ['MOVIE', 'OVA', 'ONA', 'SPECIAL', 'TV_SPECIAL', 'MUSIC', 'PV'].includes(mediaFormat);
+      if (isSpecialFormat) continue;
+    }
+
     if (!normalizedMediaTitle.includes(normalizedKw) && !forbidden.some(f => normalizeTitle(f).normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(normalizedKw))) {
       forbidden.push(kw);
     }
@@ -163,10 +172,8 @@ function validateRelease(parsed, media) {
   const releaseSeason = parsed.season ?? 1;
   if (releaseSeason !== mediaSeason) {
     if (mediaSeason === 1) {
-      // For media season 1, any release with a different season is invalid
       return { valid: false, reason: 'season_mismatch' };
     } else {
-      // For media season > 1, require explicit season indicator in release title
       const relTitleNorm = normalizeTitle(extractReleaseTitle(parsed.originalName)).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
       const seasonRegex = new RegExp(`\\b(season\\s*0?${mediaSeason}|s0?${mediaSeason})\\b`, 'i');
       const romanMap = { 2: 'ii', 3: 'iii', 4: 'iv', 5: 'v' };
