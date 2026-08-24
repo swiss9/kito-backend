@@ -74,6 +74,7 @@ function groupByFranchise(items) {
     const providerId = first.providerId;
     const aliases = [...new Set(seasons.flatMap(s => s.aliases || []))];
 
+    // Deduplicate seasons by ID first
     const uniqueSeasons = [];
     const seenIds = new Set();
     for (const s of seasons) {
@@ -93,6 +94,15 @@ function groupByFranchise(items) {
       }
     }
 
+    // Further deduplicate by season number, keeping first occurrence
+    const seasonMap = new Map();
+    for (const s of uniqueSeasons) {
+      if (!seasonMap.has(s.seasonNumber)) {
+        seasonMap.set(s.seasonNumber, s);
+      }
+    }
+    const finalSeasons = Array.from(seasonMap.values());
+
     results.push({
       id: `franchise:${base}`,
       title: cleanTitle,
@@ -108,7 +118,7 @@ function groupByFranchise(items) {
       hasRelease: false,
       hasBatch: false,
       collection: true,
-      seasons: uniqueSeasons
+      seasons: finalSeasons
     });
   }
   return results;
@@ -223,10 +233,12 @@ router.get('/search', async (req, res) => {
       }
     }
 
+    // Filter out unreleased entries
     allResults = allResults.filter(item => item.status !== 'NOT_YET_RELEASED');
 
     let unique = [];
     if (group) {
+      // Only anime series are grouped into collections.
       const animeSeries = allResults.filter(item => item.mediaType === MediaType.SERIES && item.category === 'anime');
       const otherItems = allResults.filter(item => !(item.mediaType === MediaType.SERIES && item.category === 'anime'));
 
@@ -234,15 +246,18 @@ router.get('/search', async (req, res) => {
       const collections = groupedAnime.filter(item => item.collection);
       const standaloneAnime = groupedAnime.filter(item => !item.collection);
 
+      // Collect all season IDs that are part of collections
       const collectionSeasonIds = new Set();
       collections.forEach(c => {
         c.seasons.forEach(s => collectionSeasonIds.add(s.id));
       });
 
+      // Remove individual series entries that are already covered by a collection
       const filteredStandaloneAnime = standaloneAnime.filter(item => !collectionSeasonIds.has(item.id));
 
       unique = [...collections, ...filteredStandaloneAnime, ...otherItems];
 
+      // Remove duplicate IDs
       const seen = new Set();
       unique = unique.filter(item => {
         if (seen.has(item.id)) return false;
@@ -250,6 +265,7 @@ router.get('/search', async (req, res) => {
         return true;
       });
 
+      // Hide individual movies that are part of a franchise collection
       const finalCollections = unique.filter(item => item.collection);
       const finalNonCollections = unique.filter(item => !item.collection);
 
