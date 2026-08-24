@@ -2,11 +2,43 @@ const express = require('express');
 const router = express.Router();
 const { getCached, setCache } = require('../utils');
 const { categoryConfig, CoverageType, TRUSTED_GROUPS } = require('../config');
-const { fetchAniList, fetchTmdb, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia, searchJikan } = require('../services/metadataService');
+const { fetchAniList, searchAnilistByTitle, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia } = require('../services/metadataService');
 const { searchReleases } = require('../services/torrentService');
 const { MediaType } = require('../config');
 
 function getCategory(id) { return categoryConfig[id] || null; }
+
+async function fallbackFetchAnimeByTitle(title, categoryId) {
+  let media = null;
+  try {
+    const jikanResults = await searchJikan(title);
+    if (jikanResults.length > 0) {
+      const jikanItem = jikanResults[0];
+      media = normalizeJikanMedia(jikanItem, categoryId);
+      return media;
+    }
+  } catch (err) { console.warn('Jikan fallback failed', err.message); }
+
+  if (process.env.TMDB_API_KEY) {
+    try {
+      const tmdbResults = await fetchTmdb('search/tv', { query: title, page: 1 });
+      if (tmdbResults.length > 0) {
+        media = normalizeTmdbMedia(tmdbResults[0], categoryId);
+        return media;
+      }
+    } catch (err) { console.warn('TMDB fallback failed', err.message); }
+  }
+
+  try {
+    const anilistItem = await searchAnilistByTitle(title);
+    if (anilistItem) {
+      media = normalizeAniListMedia(anilistItem, categoryId, []);
+      return media;
+    }
+  } catch (err) { console.warn('AniList fallback failed', err.message); }
+
+  return null;
+}
 
 router.get('/releases', async (req, res) => {
   try {
@@ -14,11 +46,11 @@ router.get('/releases', async (req, res) => {
     const categoryId = req.query.category || 'anime';
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
+    const title = req.query.title || '';
     if (!mediaId) return res.status(400).json({ error: 'Media ID required' });
     const config = getCategory(categoryId);
     if (!config) return res.status(400).json({ error: 'Invalid category' });
 
-    // Include category in cache key to avoid cross-category contamination
     const cacheKey = `releases:${categoryId}:${mediaId}`;
     const cached = getCached(cacheKey);
     let mediaObject = null;
@@ -35,53 +67,74 @@ router.get('/releases', async (req, res) => {
       let relations = [];
 
       if (provider === 'anilist') {
-        const query = `
-          query($id: Int) {
-            Media(id: $id) {
-              id title { romaji english native } synonyms seasonYear coverImage { medium large } format episodes chapters status genres
-              relations {
-                edges {
-                  relationType
-                  node {
-                    id
-                    title { romaji english native }
-                    format
+        try {
+          const query = `
+            query($id: Int) {
+              Media(id: $id) {
+                id title { romaji english native } synonyms seasonYear coverImage { medium large } format episodes chapters status genres
+                relations {
+                  edges {
+                    relationType
+                    node {
+                      id
+                      title { romaji english native }
+                      format
+                    }
                   }
                 }
               }
             }
+          `;
+          const data = await fetchAniList(query, { id: parseInt(providerId) });
+          rawMedia = data.Media;
+          if (rawMedia && rawMedia.relations && rawMedia.relations.edges) {
+            relations = rawMedia.relations.edges.map(e => ({
+              relationType: e.relationType,
+              node: e.node
+            }));
           }
-        `;
-        const data = await fetchAniList(query, { id: parseInt(providerId) });
-        rawMedia = data.Media;
-        if (rawMedia && rawMedia.relations && rawMedia.relations.edges) {
-          relations = rawMedia.relations.edges.map(e => ({
-            relationType: e.relationType,
-            node: e.node
-          }));
+          if (rawMedia) mediaObject = normalizeAniListMedia(rawMedia, categoryId, relations);
+        } catch (err) {
+          console.warn('AniList detail failed, trying fallback', err.message);
+          if (title) {
+            mediaObject = await fallbackFetchAnimeByTitle(title, categoryId);
+          }
         }
-        if (rawMedia) mediaObject = normalizeAniListMedia(rawMedia, categoryId, relations);
       } else if (provider === 'jikan') {
-        const url = `https://api.jikan.moe/v4/anime/${providerId}`;
-        const res = await fetch(url, {
-          headers: { 'User-Agent': 'KITO/1.0' },
-          signal: AbortSignal.timeout(8000)
-        });
-        if (res.ok) {
-          const data = await res.json();
-          rawMedia = data.data;
-          if (rawMedia) mediaObject = normalizeJikanMedia(rawMedia, categoryId);
+        try {
+          const url = `https://api.jikan.moe/v4/anime/${providerId}`;
+          const res = await fetch(url, {
+            headers: { 'User-Agent': 'KITO/1.0' },
+            signal: AbortSignal.timeout(8000)
+          });
+          if (res.ok) {
+            const data = await res.json();
+            rawMedia = data.data;
+            if (rawMedia) mediaObject = normalizeJikanMedia(rawMedia, categoryId);
+          }
+        } catch (err) {
+          console.warn('Jikan detail failed, trying fallback', err.message);
+          if (title) {
+            mediaObject = await fallbackFetchAnimeByTitle(title, categoryId);
+          }
         }
       } else if (provider === 'tmdb') {
         if (!process.env.TMDB_API_KEY) {
           return res.status(503).json({ error: 'TMDB API key not configured' });
         }
-        const mediaType = config.mediaType === MediaType.MOVIE ? 'movie' : 'tv';
-        const url = `https://api.themoviedb.org/3/${mediaType}/${providerId}?api_key=${process.env.TMDB_API_KEY}&language=en-US`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-        if (res.ok) {
-          const data = await res.json();
-          mediaObject = normalizeTmdbMedia(data, categoryId);
+        try {
+          const mediaType = config.mediaType === MediaType.MOVIE ? 'movie' : 'tv';
+          const url = `https://api.themoviedb.org/3/${mediaType}/${providerId}?api_key=${process.env.TMDB_API_KEY}&language=en-US`;
+          const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+          if (res.ok) {
+            const data = await res.json();
+            mediaObject = normalizeTmdbMedia(data, categoryId);
+          }
+        } catch (err) {
+          console.warn('TMDB detail failed, trying fallback', err.message);
+          if (title) {
+            mediaObject = await fallbackFetchAnimeByTitle(title, categoryId);
+          }
         }
       }
 
@@ -162,6 +215,104 @@ router.get('/releases', async (req, res) => {
   } catch (err) {
     console.error('Releases error:', err);
     res.status(500).json({ error: 'Failed to fetch releases' });
+  }
+});
+
+router.get('/franchise', async (req, res) => {
+  try {
+    const mediaId = req.query.mediaId || '';
+    const title = req.query.title || '';
+    if (!mediaId && !title) return res.status(400).json({ error: 'mediaId or title required' });
+
+    let baseTitle = title;
+    let provider = null;
+    let providerId = null;
+    if (mediaId.startsWith('anilist')) {
+      provider = 'anilist';
+      providerId = parseInt(mediaId.split(':')[1]);
+    } else if (mediaId.startsWith('jikan')) {
+      provider = 'jikan';
+      providerId = parseInt(mediaId.split(':')[1]);
+    }
+
+    let mainMedia = null;
+    if (provider === 'anilist' && providerId) {
+      try {
+        const query = `
+          query($id: Int) {
+            Media(id: $id) {
+              id title { romaji english native } format seasonYear
+              relations {
+                edges {
+                  relationType
+                  node {
+                    id title { romaji english native } format seasonYear
+                  }
+                }
+              }
+            }
+          }
+        `;
+        const data = await fetchAniList(query, { id: providerId });
+        mainMedia = data.Media;
+      } catch (err) {
+        console.warn('AniList franchise fetch failed', err.message);
+      }
+    }
+
+    if (!mainMedia && title) {
+      try {
+        const anilistItem = await searchAnilistByTitle(title);
+        if (anilistItem) {
+          mainMedia = anilistItem;
+        }
+      } catch (err) { console.warn('AniList search failed for franchise', err.message); }
+    }
+
+    if (!mainMedia && title) {
+      try {
+        const jikanResults = await searchJikan(title);
+        if (jikanResults.length > 0) {
+          const jikanItem = jikanResults[0];
+          const res2 = await fetch(`https://api.jikan.moe/v4/anime/${jikanItem.mal_id}`, {
+            headers: { 'User-Agent': 'KITO/1.0' },
+            signal: AbortSignal.timeout(8000)
+          });
+          if (res2.ok) {
+            const detail = await res2.json();
+            mainMedia = detail.data;
+          }
+        }
+      } catch (err) { console.warn('Jikan franchise fetch failed', err.message); }
+    }
+
+    if (!mainMedia) {
+      return res.status(404).json({ error: 'Franchise not found' });
+    }
+
+    let seasons = [];
+    if (mainMedia.relations && mainMedia.relations.edges) {
+      seasons = mainMedia.relations.edges
+        .filter(e => ['SEQUEL', 'PREQUEL', 'SPIN_OFF'].includes(e.relationType))
+        .map(e => e.node);
+    }
+    const uniqueSeasons = [mainMedia, ...seasons].filter((v, i, a) => a.findIndex(t => t.id === v.id) === i);
+    const normalized = uniqueSeasons.map(item => normalizeAniListMedia(item, 'anime', []));
+
+    res.json({
+      title: baseTitle || mainMedia.title?.romaji || mainMedia.title?.english || mainMedia.title?.native,
+      seasons: normalized.map(s => ({
+        id: s.id,
+        title: s.title,
+        year: s.year,
+        poster: s.poster,
+        mediaType: s.mediaType,
+        episodeCount: s.episodeCount
+      }))
+    });
+  } catch (err) {
+    console.error('Franchise error:', err);
+    res.status(500).json({ error: 'Failed to fetch franchise' });
   }
 });
 
