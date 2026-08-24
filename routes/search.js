@@ -182,8 +182,14 @@ router.get('/search', async (req, res) => {
         if (items.length === 0 && process.env.TMDB_API_KEY) {
           try {
             let tmdbResults = await fetchTmdb('search/tv', { query: q, page: 1 });
+            tmdbResults = tmdbResults.filter(item => 
+              item.genre_ids?.includes(16) && item.original_language === 'ja'
+            );
             if (!tmdbResults.length) {
-              tmdbResults = await fetchTmdb('search/movie', { query: q, page: 1 });
+              const movieResults = await fetchTmdb('search/movie', { query: q, page: 1 });
+              tmdbResults = movieResults.filter(item => 
+                item.genre_ids?.includes(16) && item.original_language === 'ja'
+              );
             }
             items = tmdbResults.map(item => {
               const media = normalizeTmdbMedia(item, catId);
