@@ -1,8 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const { categoryConfig } = require('../config');
+const { categoryConfig, MediaType } = require('../config');
 const { fetchAniList, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia, mediaToCard } = require('../services/metadataService');
-const { MediaType } = require('../config');
 const { stripSeasonInfo } = require('../utils');
 
 function getCategories() { return Object.keys(categoryConfig); }
@@ -224,12 +223,19 @@ router.get('/search', async (req, res) => {
       }
     }
 
-    // Filter out unreleased entries
     allResults = allResults.filter(item => item.status !== 'NOT_YET_RELEASED');
 
     let unique = [];
     if (group) {
-      unique = groupByFranchise(allResults);
+      const seriesItems = allResults.filter(item => item.mediaType === MediaType.SERIES);
+      const movieItems = allResults.filter(item => item.mediaType === MediaType.MOVIE);
+
+      const groupedSeries = groupByFranchise(seriesItems);
+      const collections = groupedSeries.filter(item => item.collection);
+      const standaloneSeries = groupedSeries.filter(item => !item.collection);
+
+      unique = [...collections, ...standaloneSeries, ...movieItems];
+
       const seen = new Set();
       unique = unique.filter(item => {
         if (seen.has(item.id)) return false;
@@ -237,14 +243,13 @@ router.get('/search', async (req, res) => {
         return true;
       });
 
-      // Hide individual movie entries when a collection for the same franchise exists
-      const collections = unique.filter(item => item.collection);
-      const nonCollections = unique.filter(item => !item.collection);
+      const finalCollections = unique.filter(item => item.collection);
+      const finalNonCollections = unique.filter(item => !item.collection);
 
-      const filteredNonCollections = nonCollections.filter(item => {
+      const filteredNonCollections = finalNonCollections.filter(item => {
         if (item.mediaType === MediaType.MOVIE) {
           const movieTitle = item.title.toLowerCase();
-          return !collections.some(c => {
+          return !finalCollections.some(c => {
             const base = c.title.toLowerCase();
             return movieTitle === base ||
                    movieTitle.startsWith(base + ' ') ||
@@ -254,7 +259,7 @@ router.get('/search', async (req, res) => {
         return true;
       });
 
-      unique = [...collections, ...filteredNonCollections];
+      unique = [...finalCollections, ...filteredNonCollections];
     } else {
       const seen = new Set();
       unique = allResults.filter(item => {
