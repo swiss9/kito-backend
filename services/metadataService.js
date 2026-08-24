@@ -22,6 +22,29 @@ async function fetchAniList(query, variables) {
   return data.data;
 }
 
+async function searchAnilistByTitle(title) {
+  const query = `
+    query($search: String) {
+      Page(page: 1, perPage: 1) {
+        media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
+          id
+          title { romaji english native }
+          synonyms
+          seasonYear
+          coverImage { medium large }
+          format
+          episodes
+          status
+          genres
+        }
+      }
+    }
+  `;
+  const data = await fetchAniList(query, { search: title });
+  if (!data.Page || !data.Page.media || data.Page.media.length === 0) return null;
+  return data.Page.media[0];
+}
+
 async function fetchTmdb(endpoint, params = {}) {
   if (!TMDB_API_KEY) return [];
   const url = new URL(`https://api.themoviedb.org/3/${endpoint}`);
@@ -175,6 +198,7 @@ function mediaToCard(media) {
 
 module.exports = {
   fetchAniList,
+  searchAnilistByTitle,
   fetchTmdb,
   searchJikan,
   normalizeAniListMedia,
