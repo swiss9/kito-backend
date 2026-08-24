@@ -75,6 +75,26 @@ function groupByFranchise(items) {
     const providerId = first.providerId;
     const aliases = [...new Set(seasons.flatMap(s => s.aliases || []))];
 
+    // Deduplicate seasons by ID
+    const uniqueSeasons = [];
+    const seenIds = new Set();
+    for (const s of seasons) {
+      if (!seenIds.has(s.id)) {
+        seenIds.add(s.id);
+        uniqueSeasons.push({
+          id: s.id,
+          title: s.title,
+          subtitle: s.subtitle,
+          year: s.year,
+          poster: s.poster,
+          seasonNumber: extractSeasonFromTitle(s.title) ?? 1,
+          provider: s.provider,
+          providerId: s.providerId,
+          category: s.category
+        });
+      }
+    }
+
     results.push({
       id: `franchise:${base}`,
       title: cleanTitle,
@@ -90,17 +110,7 @@ function groupByFranchise(items) {
       hasRelease: false,
       hasBatch: false,
       collection: true,
-      seasons: seasons.map(s => ({
-        id: s.id,
-        title: s.title,
-        subtitle: s.subtitle,
-        year: s.year,
-        poster: s.poster,
-        seasonNumber: extractSeasonFromTitle(s.title) ?? 1,
-        provider: s.provider,
-        providerId: s.providerId,
-        category: s.category
-      }))
+      seasons: uniqueSeasons
     });
   }
   return results;
@@ -214,6 +224,9 @@ router.get('/search', async (req, res) => {
         }
       }
     }
+
+    // Filter out unreleased entries before grouping/dedup
+    allResults = allResults.filter(item => item.status !== 'NOT_YET_RELEASED');
 
     let unique = [];
     if (group) {
