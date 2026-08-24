@@ -10,8 +10,22 @@ function getCategory(id) { return categoryConfig[id] || null; }
 function extractSeasonFromTitle(title) {
   if (!title) return null;
   const clean = title.replace(/\[.*?\]|\(.*?\)/g, ' ');
-  const ordinalMatch = clean.match(/\b(\d+)(?:st|nd|rd|th)\s*season\b/i);
-  if (ordinalMatch) return parseInt(ordinalMatch[1]);
+  const ordinalMap = {
+    'first': 1,
+    'second': 2,
+    'third': 3,
+    'fourth': 4,
+    'fifth': 5,
+    'sixth': 6,
+    'seventh': 7,
+    'eighth': 8,
+    'ninth': 9,
+    'tenth': 10
+  };
+  const wordMatch = clean.match(/\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s+season\b/i);
+  if (wordMatch) return ordinalMap[wordMatch[1].toLowerCase()];
+  const numericOrdinal = clean.match(/\b(\d+)(?:st|nd|rd|th)\s*season\b/i);
+  if (numericOrdinal) return parseInt(numericOrdinal[1]);
   const romanMap = { 'II': 2, 'III': 3, 'IV': 4, 'V': 5, 'VI': 6 };
   const romanMatch = clean.match(/\b(II|III|IV|V|VI)\b/);
   if (romanMatch) return romanMap[romanMatch[1]];
