@@ -178,12 +178,11 @@ function normalizeTmdbMedia(item, categoryId) {
 }
 
 function mediaToCard(media) {
-  const sub = media.mediaType === MediaType.MOVIE ? `Film · ${media.year || 'Latest'}` : `Series · ${media.year || 'Latest'}`;
   return {
     id: media.id,
     title: media.title,
     aliases: media.aliases,
-    subtitle: sub,
+    subtitle: media.mediaType === MediaType.MOVIE ? `Film · ${media.year || 'Latest'}` : `Series · ${media.year || 'Latest'}`,
     category: media.category,
     mediaType: media.mediaType,
     year: media.year,
@@ -192,6 +191,8 @@ function mediaToCard(media) {
     provider: media.provider,
     providerId: media.providerId,
     status: media.status,
+    format: media.format,
+    relationsRaw: media.relationsRaw || [],
     hasRelease: false,
     hasBatch: false
   };
