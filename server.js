@@ -5,8 +5,7 @@ const helmet = require('helmet');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const { errorHandler } = require('./middleware/errorHandler');
-const { validate } = require('./middleware/validate');
-const Joi = require('joi');
+const { checkTmdb, checkAnilist, checkTorrentclaw } = require('./services/healthService');
 
 const app = express();
 
@@ -28,6 +27,10 @@ const limiter = rateLimit({
 });
 app.use('/api', limiter);
 
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', message: 'KITO API running on Vercel.' });
+});
+
 const searchRoutes = require('./routes/search');
 const mediaRoutes = require('./routes/media');
 app.use('/api', searchRoutes);
@@ -41,6 +44,10 @@ app.get('/api/health', async (req, res) => {
   };
   const healthy = Object.values(checks).every(c => c === 'ok');
   res.status(healthy ? 200 : 503).json({ status: healthy ? 'ok' : 'degraded', checks });
+});
+
+app.use((req, res) => {
+  res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Route not found' } });
 });
 
 app.use(errorHandler);
