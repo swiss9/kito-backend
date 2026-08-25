@@ -2,6 +2,13 @@ const TMDB_API_KEY = process.env.TMDB_API_KEY;
 const TORRENTCLAW_API_KEY = process.env.TORRENTCLAW_API_KEY;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
+const requiredEnv = ['TMDB_API_KEY', 'TORRENTCLAW_API_KEY', 'GROQ_API_KEY'];
+for (const key of requiredEnv) {
+  if (!process.env[key]) {
+    throw new Error(`Missing required environment variable: ${key}`);
+  }
+}
+
 const CoverageType = {
   SINGLE: 'single',
   PARTIAL: 'partial',
