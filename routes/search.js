@@ -151,10 +151,8 @@ const searchSchema = Joi.object({
 });
 
 router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, res) => {
-  // req.query has been validated and defaults applied by the validate middleware
   const { q, category, page, perPage, group } = req.query;
 
-  // Normalize q for cache key to prevent duplicates from case differences
   const normalizedQ = q.trim().toLowerCase();
   const cacheKey = `search:${category}:${normalizedQ}:page:${page}:perPage:${perPage}:group:${group}`;
   const cached = await getCache(cacheKey);
@@ -284,10 +282,16 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
     hasMore: end < unique.length
   };
 
-  if (unique.length > 0) {
-    await setCache(cacheKey, responseData, 21600); // 6 hours
+  let ttlSeconds;
+  if (unique.length === 0) {
+    ttlSeconds = 3600;
+  } else if (unique.length < 3) {
+    ttlSeconds = 7200;
+  } else {
+    ttlSeconds = 21600;
   }
 
+  await setCache(cacheKey, responseData, ttlSeconds);
   res.json(responseData);
 }));
 
