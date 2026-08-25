@@ -156,7 +156,8 @@ router.get('/search', async (req, res) => {
       const config = getCategory(catId);
       if (!config) continue;
 
-      if (config.metadataProvider === 'anilist') {
+      // Anime: AniList -> Jikan -> TMDB fallback
+      if (config.id === 'anime') {
         let items = [];
         try {
           const query = `
@@ -215,31 +216,21 @@ router.get('/search', async (req, res) => {
         allResults.push(...items);
       }
 
-      if (config.metadataProvider === 'tmdb' && process.env.TMDB_API_KEY) {
+      // Tokusatsu: TMDB only, filter Japanese
+      if (config.id === 'tokusatsu' && process.env.TMDB_API_KEY) {
         try {
           const mediaType = config.mediaType === MediaType.MOVIE ? 'movie' : 'tv';
-          const params = { query: q, page: 1 };
-          if (catId === 'hollywood') params.region = 'US';
-          else if (catId === 'bollywood') params.region = 'IN';
           const url = new URL(`https://api.themoviedb.org/3/search/${mediaType}`);
           url.searchParams.set('api_key', process.env.TMDB_API_KEY);
           url.searchParams.set('language', 'en-US');
-          for (const [key, val] of Object.entries(params)) {
-            if (val) url.searchParams.set(key, val);
-          }
+          url.searchParams.set('query', q);
+          url.searchParams.set('page', 1);
           const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
           if (res.ok) {
             const data = await res.json();
             let results = data.results || [];
-            if (catId === 'bollywood') {
-              results = results.filter(item => item.original_language === 'hi');
-            } else if (catId === 'asian') {
-              results = results.filter(item => ['ja', 'ko', 'zh'].includes(item.original_language));
-            } else if (catId === 'animation') {
-              results = results.filter(item => item.genre_ids?.includes(16));
-            } else if (catId === 'tokusatsu') {
-              results = results.filter(item => item.original_language === 'ja');
-            }
+            // Filter Japanese only
+            results = results.filter(item => item.original_language === 'ja');
             const items = results.map(item => {
               const media = normalizeTmdbMedia(item, catId);
               return mediaToCard(media);
@@ -252,6 +243,7 @@ router.get('/search', async (req, res) => {
       }
     }
 
+    // Filter out unreleased
     allResults = allResults.filter(item => item.status !== 'NOT_YET_RELEASED');
 
     let unique = [];
