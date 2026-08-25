@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { categoryConfig, MediaType } = require('../config');
+const { categoryConfig, MediaType, SEQUEL_KEYWORDS } = require('../config');
 const { fetchAniList, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia, mediaToCard } = require('../services/metadataService');
 const { stripSeasonInfo } = require('../utils');
 
@@ -55,10 +55,18 @@ function removeSeasonInfoFromTitle(title) {
     .trim();
 }
 
+function getFranchiseBaseTitle(title) {
+  let base = stripSeasonInfo(title);
+  for (const kw of SEQUEL_KEYWORDS) {
+    base = base.replace(new RegExp(`\\b${kw}\\b`, 'gi'), ' ');
+  }
+  return base.replace(/\s+/g, ' ').trim();
+}
+
 function groupByFranchise(items) {
   const groups = {};
   for (const item of items) {
-    const base = stripSeasonInfo(item.title);
+    const base = getFranchiseBaseTitle(item.title);
     if (!base) continue;
     if (!groups[base]) groups[base] = [];
     groups[base].push(item);
@@ -102,7 +110,8 @@ function groupByFranchise(items) {
           seasonNumber: extractSeasonFromTitle(s.title) ?? 1,
           provider: s.provider,
           providerId: s.providerId,
-          category: s.category
+          category: s.category,
+          label: s.title
         });
       }
     }
@@ -156,7 +165,6 @@ router.get('/search', async (req, res) => {
       const config = getCategory(catId);
       if (!config) continue;
 
-      // Anime: AniList -> Jikan -> TMDB fallback
       if (config.id === 'anime') {
         let items = [];
         try {
@@ -216,7 +224,6 @@ router.get('/search', async (req, res) => {
         allResults.push(...items);
       }
 
-      // Tokusatsu: TMDB only, filter Japanese
       if (config.id === 'tokusatsu' && process.env.TMDB_API_KEY) {
         try {
           const mediaType = config.mediaType === MediaType.MOVIE ? 'movie' : 'tv';
@@ -229,7 +236,6 @@ router.get('/search', async (req, res) => {
           if (res.ok) {
             const data = await res.json();
             let results = data.results || [];
-            // Filter Japanese only
             results = results.filter(item => item.original_language === 'ja');
             const items = results.map(item => {
               const media = normalizeTmdbMedia(item, catId);
@@ -243,7 +249,6 @@ router.get('/search', async (req, res) => {
       }
     }
 
-    // Filter out unreleased
     allResults = allResults.filter(item => item.status !== 'NOT_YET_RELEASED');
 
     let unique = [];
@@ -267,10 +272,15 @@ router.get('/search', async (req, res) => {
       const collectionsWithMovies = collections.map(c => {
         const matchingMovies = movieItems.filter(m => {
           const movieTitle = m.title.toLowerCase();
-          const base = c.title.toLowerCase();
-          return movieTitle === base ||
-                 movieTitle.startsWith(base + ' ') ||
-                 movieTitle.startsWith(base + ':');
+          const patterns = [
+            c.title.toLowerCase(),
+            ...c.seasons.map(s => s.title.toLowerCase())
+          ];
+          return patterns.some(p => 
+            movieTitle === p ||
+            movieTitle.startsWith(p + ' ') ||
+            movieTitle.startsWith(p + ':')
+          );
         });
         return { ...c, movies: matchingMovies };
       });
