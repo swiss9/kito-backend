@@ -55,20 +55,6 @@ function removeSeasonInfoFromTitle(title) {
     .trim();
 }
 
-function getMovieFranchiseBase(title) {
-  if (!title) return '';
-  let base = title;
-  const patterns = [
-    /\b(movie|film|the movie|the film)\b.*$/i,
-    /\b(movie|film)\s*:/i,
-    /:\s*(movie|film)\b/i
-  ];
-  for (const pat of patterns) {
-    base = base.replace(pat, '');
-  }
-  return stripSeasonInfo(base);
-}
-
 function groupByFranchise(items) {
   const groups = {};
   for (const item of items) {
@@ -136,7 +122,6 @@ function groupByFranchise(items) {
       subtitle: `${seasons.length} seasons${minYear ? ` · ${minYear}${maxYear && maxYear !== minYear ? '–' + maxYear : ''}` : ''}`,
       category: first.category,
       mediaType: 'collection',
-      collectionType: 'series',
       year: minYear,
       episodeCount: null,
       poster,
@@ -145,66 +130,8 @@ function groupByFranchise(items) {
       hasRelease: false,
       hasBatch: false,
       collection: true,
-      seasons: finalSeasons
-    });
-  }
-  return results;
-}
-
-function groupMoviesByFranchise(items) {
-  const groups = {};
-  for (const item of items) {
-    const base = getMovieFranchiseBase(item.title);
-    if (!base) continue;
-    if (!groups[base]) groups[base] = [];
-    groups[base].push(item);
-  }
-
-  const results = [];
-  for (const base in groups) {
-    const movies = groups[base];
-    if (movies.length === 1) {
-      results.push(movies[0]);
-      continue;
-    }
-
-    const first = movies[0];
-    const cleanTitle = `${base} Movie Collection`;
-    const years = movies.map(s => s.year).filter(Boolean);
-    const minYear = years.length ? Math.min(...years) : null;
-    const maxYear = years.length ? Math.max(...years) : null;
-    const poster = movies.find(s => s.poster)?.poster || first.poster;
-    const provider = first.provider;
-    const providerId = first.providerId;
-    const aliases = [...new Set(movies.flatMap(s => s.aliases || []))];
-
-    results.push({
-      id: `movie_franchise:${base}`,
-      title: cleanTitle,
-      aliases,
-      subtitle: `${movies.length} movies${minYear ? ` · ${minYear}${maxYear && maxYear !== minYear ? '–' + maxYear : ''}` : ''}`,
-      category: first.category,
-      mediaType: 'collection',
-      collectionType: 'movie',
-      year: minYear,
-      episodeCount: null,
-      poster,
-      provider,
-      providerId,
-      hasRelease: false,
-      hasBatch: false,
-      collection: true,
-      seasons: movies.map(m => ({
-        id: m.id,
-        title: m.title,
-        subtitle: m.subtitle,
-        year: m.year,
-        poster: m.poster,
-        seasonNumber: null,
-        provider: m.provider,
-        providerId: m.providerId,
-        category: m.category
-      }))
+      seasons: finalSeasons,
+      movies: []
     });
   }
   return results;
@@ -329,26 +256,38 @@ router.get('/search', async (req, res) => {
 
     let unique = [];
     if (group) {
-      const animeSeries = allResults.filter(item => item.mediaType === MediaType.SERIES && item.category === 'anime');
-      const otherItems = allResults.filter(item => !(item.mediaType === MediaType.SERIES && item.category === 'anime'));
-      const animeMovies = allResults.filter(item => item.mediaType === MediaType.MOVIE && item.category === 'anime');
+      const seriesItems = allResults.filter(item => item.mediaType === MediaType.SERIES);
+      const movieItems = allResults.filter(item => item.mediaType === MediaType.MOVIE);
+
+      const animeSeries = seriesItems.filter(item => item.category === 'anime');
+      const otherSeries = seriesItems.filter(item => item.category !== 'anime');
 
       const groupedAnime = groupByFranchise(animeSeries);
-      const seriesCollections = groupedAnime.filter(item => item.collection);
-      const standaloneAnimeSeries = groupedAnime.filter(item => !item.collection);
+      const collections = groupedAnime.filter(item => item.collection);
+      const standaloneAnime = groupedAnime.filter(item => !item.collection);
 
       const collectionSeasonIds = new Set();
-      seriesCollections.forEach(c => {
+      collections.forEach(c => {
         c.seasons.forEach(s => collectionSeasonIds.add(s.id));
       });
+      const filteredStandaloneAnime = standaloneAnime.filter(item => !collectionSeasonIds.has(item.id));
 
-      const filteredStandaloneSeries = standaloneAnimeSeries.filter(item => !collectionSeasonIds.has(item.id));
+      const collectionsWithMovies = collections.map(c => {
+        const matchingMovies = movieItems.filter(m => {
+          const movieTitle = m.title.toLowerCase();
+          const base = c.title.toLowerCase();
+          return movieTitle === base ||
+                 movieTitle.startsWith(base + ' ') ||
+                 movieTitle.startsWith(base + ':');
+        });
+        return { ...c, movies: matchingMovies };
+      });
 
-      const groupedMovies = groupMoviesByFranchise(animeMovies);
-      const movieCollections = groupedMovies.filter(item => item.collection);
-      const standaloneMovies = groupedMovies.filter(item => !item.collection);
+      const attachedMovieIds = new Set();
+      collectionsWithMovies.forEach(c => c.movies.forEach(m => attachedMovieIds.add(m.id)));
+      const standaloneMovies = movieItems.filter(m => !attachedMovieIds.has(m.id));
 
-      unique = [...seriesCollections, ...filteredStandaloneSeries, ...movieCollections, ...standaloneMovies, ...otherItems];
+      unique = [...collectionsWithMovies, ...filteredStandaloneAnime, ...otherSeries, ...standaloneMovies];
 
       const seen = new Set();
       unique = unique.filter(item => {
@@ -356,24 +295,6 @@ router.get('/search', async (req, res) => {
         seen.add(item.id);
         return true;
       });
-
-      const finalCollections = unique.filter(item => item.collection);
-      const finalNonCollections = unique.filter(item => !item.collection);
-
-      const filteredNonCollections = finalNonCollections.filter(item => {
-        if (item.mediaType === MediaType.MOVIE) {
-          const movieTitle = item.title.toLowerCase();
-          return !finalCollections.some(c => {
-            const base = c.title.toLowerCase();
-            return movieTitle === base ||
-                   movieTitle.startsWith(base + ' ') ||
-                   movieTitle.startsWith(base + ':');
-          });
-        }
-        return true;
-      });
-
-      unique = [...finalCollections, ...filteredNonCollections];
     } else {
       const seen = new Set();
       unique = allResults.filter(item => {
