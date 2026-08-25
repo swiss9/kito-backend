@@ -3,7 +3,7 @@ const router = express.Router();
 const Joi = require('joi');
 const { validate } = require('../middleware/validate');
 const { asyncHandler } = require('../middleware/asyncHandler');
-const { ApiError } = require('../middleware/errorHandler');
+const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, MediaType } = require('../config');
 const { fetchAniList, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia, mediaToCard } = require('../services/metadataService');
 const { stripSeasonInfo } = require('../utils');
@@ -151,7 +151,17 @@ const searchSchema = Joi.object({
 });
 
 router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, res) => {
+  // req.query has been validated and defaults applied by the validate middleware
   const { q, category, page, perPage, group } = req.query;
+
+  // Normalize q for cache key to prevent duplicates from case differences
+  const normalizedQ = q.trim().toLowerCase();
+  const cacheKey = `search:${category}:${normalizedQ}:page:${page}:perPage:${perPage}:group:${group}`;
+  const cached = await getCache(cacheKey);
+  if (cached) {
+    return res.json(cached);
+  }
+
   const categories = category === 'any' ? getCategories() : [category];
   let allResults = [];
 
@@ -263,7 +273,8 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   const start = (page - 1) * perPage;
   const end = start + perPage;
   const paginated = unique.slice(start, end);
-  res.json({
+
+  const responseData = {
     query: q,
     category,
     page,
@@ -271,7 +282,13 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
     total: unique.length,
     items: paginated,
     hasMore: end < unique.length
-  });
+  };
+
+  if (unique.length > 0) {
+    await setCache(cacheKey, responseData, 21600); // 6 hours
+  }
+
+  res.json(responseData);
 }));
 
 module.exports = router;
