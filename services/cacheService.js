@@ -1,6 +1,7 @@
 const { kv } = require('@vercel/kv');
 
 const memoryCache = new Map();
+const cacheTimers = new Map();
 
 async function getCache(key) {
   if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
@@ -23,8 +24,20 @@ async function setCache(key, data, ttlSeconds = 3600) {
       console.warn('Vercel KV set failed, using memory cache:', err.message);
     }
   }
+
+  if (cacheTimers.has(key)) {
+    clearTimeout(cacheTimers.get(key));
+    cacheTimers.delete(key);
+  }
+
   memoryCache.set(key, data);
-  setTimeout(() => memoryCache.delete(key), ttlSeconds * 1000);
+
+  const timer = setTimeout(() => {
+    memoryCache.delete(key);
+    cacheTimers.delete(key);
+  }, ttlSeconds * 1000);
+
+  cacheTimers.set(key, timer);
 }
 
 module.exports = { getCache, setCache };
