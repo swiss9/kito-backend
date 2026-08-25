@@ -4,7 +4,7 @@ const Joi = require('joi');
 const { validate } = require('../middleware/validate');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
-const { getCached, setCache } = require('../utils');
+const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, CoverageType, TRUSTED_GROUPS, MediaType } = require('../config');
 const { fetchAniList, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia } = require('../services/metadataService');
 const { searchReleases } = require('../services/torrentService');
@@ -67,7 +67,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
   }
 
   const cacheKey = `releases:${categoryId}:${mediaId}`;
-  const cached = getCached(cacheKey);
+  const cached = await getCache(cacheKey);
   let mediaObject = null;
   let releases = [];
 
@@ -144,7 +144,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
 
     if (mediaObject) {
       releases = await searchReleases(mediaObject);
-      setCache(cacheKey, { media: mediaObject, releases });
+      await setCache(cacheKey, { media: mediaObject, releases }, 43200); // 12 hours
     }
   }
 
