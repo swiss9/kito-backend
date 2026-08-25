@@ -14,4 +14,4 @@ const validate = (schema, source = 'query') => {
   };
 };
 
-module.exports = validate;
+module.exports = { validate };
