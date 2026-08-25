@@ -9,6 +9,8 @@ const { checkTmdb, checkAnilist, checkTorrentclaw } = require('./services/health
 
 const app = express();
 
+app.set('trust proxy', 1);
+
 app.use(helmet());
 app.use(cors({
   origin: process.env.FRONTEND_ORIGIN || 'https://kito.app',
