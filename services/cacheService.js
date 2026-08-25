@@ -1,34 +1,26 @@
-const { Redis } = require('@upstash/redis');
-
-let redisClient = null;
-if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-  redisClient = new Redis({
-    url: process.env.UPSTASH_REDIS_REST_URL,
-    token: process.env.UPSTASH_REDIS_REST_TOKEN,
-  });
-}
+const { kv } = require('@vercel/kv');
 
 const memoryCache = new Map();
 
 async function getCache(key) {
-  if (redisClient) {
+  if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
     try {
-      const value = await redisClient.get(key);
-      return value ? JSON.parse(value) : null;
+      const value = await kv.get(key);
+      return value ? (typeof value === 'string' ? JSON.parse(value) : value) : null;
     } catch (err) {
-      console.warn('Redis get failed, falling back to memory:', err.message);
+      console.warn('Vercel KV get failed, falling back to memory:', err.message);
     }
   }
   return memoryCache.get(key) || null;
 }
 
 async function setCache(key, data, ttlSeconds = 3600) {
-  if (redisClient) {
+  if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
     try {
-      await redisClient.set(key, JSON.stringify(data), { ex: ttlSeconds });
+      await kv.set(key, JSON.stringify(data), { ex: ttlSeconds });
       return;
     } catch (err) {
-      console.warn('Redis set failed, using memory cache:', err.message);
+      console.warn('Vercel KV set failed, using memory cache:', err.message);
     }
   }
   memoryCache.set(key, data);
