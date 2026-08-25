@@ -1,12 +1,35 @@
 const express = require('express');
 const router = express.Router();
-const { categoryConfig, MediaType, SEQUEL_KEYWORDS } = require('../config');
+const { categoryConfig, MediaType } = require('../config');
 const { fetchAniList, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia, mediaToCard } = require('../services/metadataService');
 const { stripSeasonInfo } = require('../utils');
 
 function getCategories() { return Object.keys(categoryConfig); }
 function getCategory(id) { return categoryConfig[id] || null; }
 
+// ---------- Union-Find ----------
+class UnionFind {
+  constructor() {
+    this.parent = new Map();
+  }
+  makeSet(x) {
+    if (!this.parent.has(x)) this.parent.set(x, x);
+  }
+  find(x) {
+    if (this.parent.get(x) !== x) {
+      this.parent.set(x, this.find(this.parent.get(x)));
+    }
+    return this.parent.get(x);
+  }
+  union(x, y) {
+    const rootX = this.find(x);
+    const rootY = this.find(y);
+    if (rootX === rootY) return;
+    this.parent.set(rootY, rootX);
+  }
+}
+
+// ---------- Helpers ----------
 function extractSeasonFromTitle(title) {
   if (!title) return null;
   const clean = title.replace(/\[.*?\]|\(.*?\)/g, ' ');
@@ -55,50 +78,48 @@ function removeSeasonInfoFromTitle(title) {
     .trim();
 }
 
-function getFranchiseBaseTitle(title) {
-  let base = stripSeasonInfo(title);
-  for (const kw of SEQUEL_KEYWORDS) {
-    base = base.replace(new RegExp(`\\b${kw}\\b`, 'gi'), ' ');
-  }
-  return base.replace(/\s+/g, ' ').trim();
-}
-
-function groupByFranchise(items) {
-  const groups = {};
-  for (const item of items) {
-    const base = getFranchiseBaseTitle(item.title);
-    if (!base) continue;
-    if (!groups[base]) groups[base] = [];
-    groups[base].push(item);
-  }
-
+// Build collections from union-find groups
+function buildCollectionsFromGroups(groups, allAnimeItems) {
   const results = [];
-  for (const base in groups) {
-    const seasons = groups[base];
-    if (seasons.length === 1) {
-      results.push(seasons[0]);
+  for (const group of groups) {
+    const items = group.items;
+    const series = items.filter(item => item.mediaType === MediaType.SERIES);
+    const movies = items.filter(item => item.mediaType === MediaType.MOVIE);
+
+    if (series.length === 0) {
+      // pure movie group: keep each movie standalone
+      movies.forEach(m => results.push(m));
       continue;
     }
 
-    seasons.sort((a, b) => {
-      const sa = extractSeasonFromTitle(a.title) ?? 1;
-      const sb = extractSeasonFromTitle(b.title) ?? 1;
+    if (series.length === 1 && movies.length === 0) {
+      // single standalone series
+      results.push(series[0]);
+      continue;
+    }
+
+    // We have a collection
+    // Sort series by season number (or year)
+    series.sort((a, b) => {
+      const sa = extractSeasonFromTitle(a.title) ?? (a.year || 1);
+      const sb = extractSeasonFromTitle(b.title) ?? (b.year || 1);
       return sa - sb;
     });
 
-    const first = seasons[0];
+    const first = series[0];
     const cleanTitle = removeSeasonInfoFromTitle(first.title) || first.title;
-    const years = seasons.map(s => s.year).filter(Boolean);
+    const years = series.map(s => s.year).filter(Boolean);
     const minYear = years.length ? Math.min(...years) : null;
     const maxYear = years.length ? Math.max(...years) : null;
-    const poster = seasons.find(s => s.poster)?.poster || first.poster;
+    const poster = series.find(s => s.poster)?.poster || first.poster;
     const provider = first.provider;
     const providerId = first.providerId;
-    const aliases = [...new Set(seasons.flatMap(s => s.aliases || []))];
+    const aliases = [...new Set(series.flatMap(s => s.aliases || []))];
 
+    // Deduplicate seasons by ID
     const uniqueSeasons = [];
     const seenIds = new Set();
-    for (const s of seasons) {
+    for (const s of series) {
       if (!seenIds.has(s.id)) {
         seenIds.add(s.id);
         uniqueSeasons.push({
@@ -111,24 +132,35 @@ function groupByFranchise(items) {
           provider: s.provider,
           providerId: s.providerId,
           category: s.category,
-          label: s.title
+          label: s.title   // original title for display
         });
       }
     }
 
-    const seasonMap = new Map();
-    for (const s of uniqueSeasons) {
-      if (!seasonMap.has(s.seasonNumber)) {
-        seasonMap.set(s.seasonNumber, s);
+    // Deduplicate movies
+    const uniqueMovies = [];
+    const seenMovieIds = new Set();
+    for (const m of movies) {
+      if (!seenMovieIds.has(m.id)) {
+        seenMovieIds.add(m.id);
+        uniqueMovies.push({
+          id: m.id,
+          title: m.title,
+          subtitle: m.subtitle,
+          year: m.year,
+          poster: m.poster,
+          provider: m.provider,
+          providerId: m.providerId,
+          category: m.category
+        });
       }
     }
-    const finalSeasons = Array.from(seasonMap.values());
 
     results.push({
-      id: `franchise:${base}`,
+      id: `franchise:${first.id}`,
       title: cleanTitle,
       aliases,
-      subtitle: `${seasons.length} seasons${minYear ? ` · ${minYear}${maxYear && maxYear !== minYear ? '–' + maxYear : ''}` : ''}`,
+      subtitle: `${uniqueSeasons.length} seasons${minYear ? ` · ${minYear}${maxYear && maxYear !== minYear ? '–' + maxYear : ''}` : ''}`,
       category: first.category,
       mediaType: 'collection',
       year: minYear,
@@ -139,8 +171,8 @@ function groupByFranchise(items) {
       hasRelease: false,
       hasBatch: false,
       collection: true,
-      seasons: finalSeasons,
-      movies: []
+      seasons: uniqueSeasons,
+      movies: uniqueMovies
     });
   }
   return results;
@@ -161,6 +193,9 @@ router.get('/search', async (req, res) => {
     const categories = categoryId === 'any' ? getCategories() : [categoryId];
     let allResults = [];
 
+    // We'll collect anime items separately to build union-find later
+    let animeItemsWithRelations = [];
+
     for (const catId of categories) {
       const config = getCategory(catId);
       if (!config) continue;
@@ -173,7 +208,26 @@ router.get('/search', async (req, res) => {
               Page(page: $page, perPage: $perPage) {
                 pageInfo { hasNextPage }
                 media(search: $search, type: $type, sort: SEARCH_MATCH) {
-                  id title { romaji english native } synonyms seasonYear coverImage { medium large } format episodes chapters status genres
+                  id
+                  title { romaji english native }
+                  synonyms
+                  seasonYear
+                  coverImage { medium large }
+                  format
+                  episodes
+                  chapters
+                  status
+                  genres
+                  relations {
+                    edges {
+                      relationType
+                      node {
+                        id
+                        title { romaji english native }
+                        format
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -181,10 +235,18 @@ router.get('/search', async (req, res) => {
           const type = 'ANIME';
           const variables = { search: q, type, page: 1, perPage: 50 };
           const data = await fetchAniList(query, variables);
-          items = (data.Page.media || []).map(item => {
-            const media = normalizeAniListMedia(item, catId, []);
+          const rawMediaList = data.Page.media || [];
+          items = rawMediaList.map(raw => {
+            const media = normalizeAniListMedia(raw, catId, []);
+            // Store raw relations for union-find
+            media.relationsRaw = raw.relations?.edges?.map(e => ({
+              relationType: e.relationType,
+              nodeId: e.node.id
+            })) || [];
             return mediaToCard(media);
           });
+          // Keep anime items with their relations
+          animeItemsWithRelations = animeItemsWithRelations.concat(items);
         } catch (err) {
           console.warn(`AniList failed: ${err.message}`);
         }
@@ -196,6 +258,7 @@ router.get('/search', async (req, res) => {
               const media = normalizeJikanMedia(item, catId);
               return mediaToCard(media);
             });
+            animeItemsWithRelations = animeItemsWithRelations.concat(items);
           } catch (err) {
             console.warn(`Jikan failed: ${err.message}`);
           }
@@ -217,6 +280,7 @@ router.get('/search', async (req, res) => {
               const media = normalizeTmdbMedia(item, catId);
               return mediaToCard(media);
             });
+            animeItemsWithRelations = animeItemsWithRelations.concat(items);
           } catch (err) {
             console.warn(`TMDB fallback failed: ${err.message}`);
           }
@@ -249,48 +313,76 @@ router.get('/search', async (req, res) => {
       }
     }
 
+    // Filter out unreleased
     allResults = allResults.filter(item => item.status !== 'NOT_YET_RELEASED');
 
     let unique = [];
     if (group) {
-      const seriesItems = allResults.filter(item => item.mediaType === MediaType.SERIES);
-      const movieItems = allResults.filter(item => item.mediaType === MediaType.MOVIE);
+      // We'll group only anime items (both series and movies)
+      const animeItems = allResults.filter(item => item.category === 'anime');
+      const otherItems = allResults.filter(item => item.category !== 'anime');
 
-      const animeSeries = seriesItems.filter(item => item.category === 'anime');
-      const otherSeries = seriesItems.filter(item => item.category !== 'anime');
+      // Build Union-Find on all anime items (series + movies)
+      const uf = new UnionFind();
+      const idToItem = new Map();
+      animeItems.forEach(item => {
+        uf.makeSet(item.id);
+        idToItem.set(item.id, item);
+      });
 
-      const groupedAnime = groupByFranchise(animeSeries);
-      const collections = groupedAnime.filter(item => item.collection);
-      const standaloneAnime = groupedAnime.filter(item => !item.collection);
+      // Also map AniList numeric IDs to item IDs for relation union
+      const anilistIdToItemId = new Map();
+      for (const item of animeItems) {
+        if (item.provider === 'anilist') {
+          anilistIdToItemId.set(item.providerId, item.id);
+        }
+      }
 
-      const collectionSeasonIds = new Set();
+      // Union based on relations
+      for (const item of animeItems) {
+        if (item.relationsRaw) {
+          for (const rel of item.relationsRaw) {
+            if (['SEQUEL','PREQUEL','SPIN_OFF','ALTERNATIVE','SIDE_STORY'].includes(rel.relationType)) {
+              const relatedItemId = anilistIdToItemId.get(rel.nodeId);
+              if (relatedItemId && relatedItemId !== item.id) {
+                uf.union(item.id, relatedItemId);
+              }
+            }
+          }
+        }
+      }
+
+      // Group items by root
+      const groupMap = new Map();
+      for (const item of animeItems) {
+        const root = uf.find(item.id);
+        if (!groupMap.has(root)) {
+          groupMap.set(root, []);
+        }
+        groupMap.get(root).push(item);
+      }
+
+      // Build collections from groups
+      const animeGroups = Array.from(groupMap.values()).map(items => ({ items }));
+      const collections = buildCollectionsFromGroups(animeGroups, animeItems);
+
+      // Filter out standalone series/movies that became part of a collection
+      const collectionIds = new Set();
       collections.forEach(c => {
-        c.seasons.forEach(s => collectionSeasonIds.add(s.id));
-      });
-      const filteredStandaloneAnime = standaloneAnime.filter(item => !collectionSeasonIds.has(item.id));
-
-      const collectionsWithMovies = collections.map(c => {
-        const matchingMovies = movieItems.filter(m => {
-          const movieTitle = m.title.toLowerCase();
-          const patterns = [
-            c.title.toLowerCase(),
-            ...c.seasons.map(s => s.title.toLowerCase())
-          ];
-          return patterns.some(p => 
-            movieTitle === p ||
-            movieTitle.startsWith(p + ' ') ||
-            movieTitle.startsWith(p + ':')
-          );
-        });
-        return { ...c, movies: matchingMovies };
+        if (c.collection) {
+          c.seasons.forEach(s => collectionIds.add(s.id));
+          c.movies.forEach(m => collectionIds.add(m.id));
+        }
       });
 
-      const attachedMovieIds = new Set();
-      collectionsWithMovies.forEach(c => c.movies.forEach(m => attachedMovieIds.add(m.id)));
-      const standaloneMovies = movieItems.filter(m => !attachedMovieIds.has(m.id));
+      // But we also need to keep standalone items that are not collections
+      const standaloneAnime = collections.filter(item => !item.collection);
+      const collectionsOnly = collections.filter(item => item.collection);
 
-      unique = [...collectionsWithMovies, ...filteredStandaloneAnime, ...otherSeries, ...standaloneMovies];
+      // Combine: collections + standalone anime + other items (tokusatsu)
+      unique = [...collectionsOnly, ...standaloneAnime, ...otherItems];
 
+      // Deduplicate by ID
       const seen = new Set();
       unique = unique.filter(item => {
         if (seen.has(item.id)) return false;
