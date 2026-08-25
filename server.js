@@ -13,7 +13,7 @@ app.set('trust proxy', 1);
 
 app.use(helmet());
 app.use(cors({
-  origin: process.env.FRONTEND_ORIGIN || 'https://kito.app',
+  origin: process.env.FRONTEND_ORIGIN || '*',
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type']
 }));
