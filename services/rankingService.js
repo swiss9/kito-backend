@@ -12,8 +12,6 @@ function tokenize(title) {
 }
 
 function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat = null, media = null) {
-  const releaseTokens = tokenize(releaseTitle);
-  const releaseSet = new Set(releaseTokens);
   const releaseLower = releaseTitle.toLowerCase();
 
   if (media && media.title) {
@@ -23,12 +21,13 @@ function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat
     const isOriginal = !isShippuden && !isBoruto;
     if (isOriginal) {
       for (const marker of SEQUEL_MARKERS) {
-        if (releaseLower.includes(marker)) {
-          return false;
-        }
+        if (releaseLower.includes(marker)) return false;
       }
     }
   }
+
+  const releaseTokens = tokenize(releaseTitle);
+  const releaseSet = new Set(releaseTokens);
 
   for (const mt of mediaTitles) {
     if (!mt) continue;
@@ -36,16 +35,8 @@ function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat
     if (mediaTokens.length === 0) continue;
 
     if (mediaTokens.length <= 2) {
-      const allPresent = mediaTokens.every(token => releaseSet.has(token));
-      if (allPresent) {
-        if (mediaSeason !== null) {
-          const seasonInRelease = extractSeasonNumber(releaseTitle);
-          if (seasonInRelease !== null && seasonInRelease !== mediaSeason) {
-            continue;
-          }
-        }
-        return true;
-      }
+      const normalizedMedia = normalizeTitle(mt);
+      if (releaseTitle.includes(normalizedMedia)) return true;
     } else {
       const allPresent = mediaTokens.every(token => releaseSet.has(token));
       if (allPresent) return true;
@@ -138,10 +129,10 @@ function extractSeasonNumber(name, { hasEpisode = false } = {}) {
 function extractEpisodeRange(name) {
   const clean = name.replace(/\[.*?\]|\(.*?\)/g, ' ');
   const patterns = [
-    /(\d+)\s*[-–~]\s*(\d+)/,
-    /[Ss](\d+)[Ee](\d+)\s*[-–~]\s*[Ee]?(\d+)/,
-    /[Ee]p(?:isode)?\s*(\d+)\s*[-–~]\s*(\d+)/i,
-    /[Ee](\d+)\s*[-–~]\s*[Ee]?(\d+)/
+    /(\d+)\s*[-â€“~]\s*(\d+)/,
+    /[Ss](\d+)[Ee](\d+)\s*[-â€“~]\s*[Ee]?(\d+)/,
+    /[Ee]p(?:isode)?\s*(\d+)\s*[-â€“~]\s*(\d+)/i,
+    /[Ee](\d+)\s*[-â€“~]\s*[Ee]?(\d+)/
   ];
   for (const pat of patterns) {
     const match = clean.match(pat);
