@@ -103,12 +103,10 @@ function normalizeAniListMedia(item, categoryId, relations = []) {
     category: categoryId,
     format: item.format,
     relations: relations.map(r => ({
-      id: r.id,
-      title: typeof r.title === 'string'
-        ? r.title
-        : (r.title?.romaji || r.title?.english || r.title?.native || ''),
+      id: r.node?.id,
+      title: r.node?.title?.romaji || r.node?.title?.english || r.node?.title?.native || '',
       relationType: r.relationType,
-      format: r.format
+      format: r.node?.format
     }))
   };
 }
@@ -178,11 +176,12 @@ function normalizeTmdbMedia(item, categoryId) {
 }
 
 function mediaToCard(media) {
+  const sub = media.mediaType === MediaType.MOVIE ? `Film · ${media.year || 'Latest'}` : `Series · ${media.year || 'Latest'}`;
   return {
     id: media.id,
     title: media.title,
     aliases: media.aliases,
-    subtitle: media.mediaType === MediaType.MOVIE ? `Film · ${media.year || 'Latest'}` : `Series · ${media.year || 'Latest'}`,
+    subtitle: sub,
     category: media.category,
     mediaType: media.mediaType,
     year: media.year,
