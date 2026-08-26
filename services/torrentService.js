@@ -87,58 +87,7 @@ async function searchAnimeGarden(title) {
   return results;
 }
 
-async function searchYTS(title) {
-  const url = `https://yts.mx/api/v2/list_movies.json?query_term=${encodeURIComponent(title)}&limit=50`;
-  const cacheKey = `yts:${url}`;
-  const cached = await getCached(cacheKey);
-  if (cached) return cached;
-
-  const res = await httpGet(url);
-  const data = await res.json();
-  if (data.status !== 'ok') return [];
-  const movies = data.data.movies || [];
-  const results = [];
-  for (const m of movies) {
-    if (m.torrents && m.torrents.length) {
-      for (const t of m.torrents) {
-        const titleName = m.title_long || m.title || 'Unknown';
-        const magnet = t.hash
-          ? `magnet:?xt=urn:btih:${t.hash}&dn=${encodeURIComponent(titleName)}&tr=udp://open.demonii.com:1337/announce&tr=udp://tracker.openbittorrent.com:80`
-          : (t.url || '');
-        results.push({
-          name: titleName,
-          magnet,
-          size: t.size || '',
-          seeders: t.seeds || 0,
-          leechers: t.peers || 0,
-          uploader: 'YTS'
-        });
-      }
-    }
-  }
-  await setCache(cacheKey, results, 1800);
-  return results;
-}
-
-async function searchEZTV(title) {
-  const url = `https://eztvx.to/api/get-torrents?query=${encodeURIComponent(title)}&limit=50`;
-  const cacheKey = `eztv:${url}`;
-  const cached = await getCached(cacheKey);
-  if (cached) return cached;
-
-  const res = await httpGet(url);
-  const data = await res.json();
-  const results = (data.torrents || []).map(t => ({
-    name: t.title || 'Unknown',
-    magnet: t.magnet_url || '',
-    size: t.size || '',
-    seeders: t.seeds || 0,
-    leechers: t.leeches || 0,
-    uploader: t.uploader || ''
-  }));
-  await setCache(cacheKey, results, 1800);
-  return results;
-}
+// Removed searchYTS and searchEZTV entirely.
 
 async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap) {
   const allResults = [];
@@ -204,55 +153,10 @@ async function searchAnimeReleases(media) {
     extraQueries.length ? extraQueries : []
   ].filter(tier => tier.length > 0);
 
-  const sourceList = ['nyaa_rss', 'torrentclaw'];
+  // Only Nyaa as primary source
+  const sourceList = ['nyaa_rss'];
   const searchFnMap = {
-    nyaa_rss: searchNyaaRSS,
-    torrentclaw: searchTorrentClaw
-  };
-  return searchWithAggregation(media, sourceList, queryTiers, searchFnMap);
-}
-
-async function searchMovieReleases(media) {
-  const allTitles = [media.title, ...(media.aliases || [])].map(t => t.replace(/[:]/g, '').trim());
-  const normalizedTitles = allTitles.map(t => t.normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
-  const combinedTitles = [...new Set([...allTitles, ...normalizedTitles])].filter(Boolean);
-  const primary = combinedTitles[0] || media.title.replace(/[:]/g, '').trim();
-  const others = combinedTitles.slice(1);
-  const queryTiers = [
-    [primary],
-    others.length ? others : [],
-    media.year ? [`${primary} ${media.year}`] : []
-  ].filter(tier => tier.length > 0);
-  const sourceList = ['yts', 'torrentclaw'];
-  const searchFnMap = {
-    yts: searchYTS,
-    torrentclaw: searchTorrentClaw
-  };
-  return searchWithAggregation(media, sourceList, queryTiers, searchFnMap);
-}
-
-async function searchSeriesReleases(media) {
-  const allTitles = [media.title, ...(media.aliases || [])].map(t => t.replace(/[:]/g, '').trim());
-  const normalizedTitles = allTitles.map(t => t.normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
-  const combinedTitles = [...new Set([...allTitles, ...normalizedTitles])].filter(Boolean);
-  const primary = combinedTitles[0] || media.title.replace(/[:]/g, '').trim();
-  const baseTitle = stripSeasonInfo(primary);
-  const others = combinedTitles.slice(1);
-
-  const mediaSeason = getMediaSeason(media);
-  const seasonPad = String(mediaSeason).padStart(2, '0');
-
-  const queryTiers = [
-    [primary],
-    others.length ? others : [],
-    [`${baseTitle} S${seasonPad}`, `${baseTitle} Season ${mediaSeason}`, `${baseTitle} Complete Season`],
-    media.year ? [`${baseTitle} ${media.year}`] : []
-  ].filter(tier => tier.length > 0);
-
-  const sourceList = ['eztv', 'torrentclaw'];
-  const searchFnMap = {
-    eztv: searchEZTV,
-    torrentclaw: searchTorrentClaw
+    nyaa_rss: searchNyaaRSS
   };
   return searchWithAggregation(media, sourceList, queryTiers, searchFnMap);
 }
@@ -261,12 +165,9 @@ async function searchReleases(media) {
   const { categoryConfig } = require('../config');
   const category = categoryConfig[media.category];
   if (!category) return [];
+  // Both anime and tokusatsu use the same Nyaa-based search
   if (category.id === 'anime' || category.id === 'tokusatsu') {
     return searchAnimeReleases(media);
-  } else if (category.id === 'hollywood' || category.id === 'bollywood' || category.id === 'animation') {
-    return searchMovieReleases(media);
-  } else if (category.id === 'asian') {
-    return searchSeriesReleases(media);
   }
   return [];
 }
@@ -295,16 +196,24 @@ async function searchReleasesWithFallback(media) {
   }
 
   let fallbackResults = [];
+  const categoryId = media.category;
   try {
     const title = media.title || (media.aliases && media.aliases[0]) || '';
     if (title) {
-      fallbackResults = await searchAnimeGarden(title);
-      fallbackResults = fallbackResults
-        .map(r => processRelease(r, media))
-        .filter(r => r !== null);
+      if (categoryId === 'anime') {
+        const raw = await searchAnimeGarden(title);
+        fallbackResults = raw
+          .map(r => processRelease(r, media))
+          .filter(r => r !== null);
+      } else if (categoryId === 'tokusatsu') {
+        const raw = await searchTorrentClaw(title);
+        fallbackResults = raw
+          .map(r => processRelease(r, media))
+          .filter(r => r !== null);
+      }
     }
   } catch (err) {
-    console.warn('AnimeGarden fallback failed:', err.message);
+    console.warn('Fallback search failed:', err.message);
   }
 
   return mergeReleases(primaryResults, fallbackResults);
@@ -313,13 +222,9 @@ async function searchReleasesWithFallback(media) {
 module.exports = {
   searchTorrentClaw,
   searchNyaaRSS,
-  searchYTS,
-  searchEZTV,
   searchAnimeGarden,
   searchWithAggregation,
   searchAnimeReleases,
-  searchMovieReleases,
-  searchSeriesReleases,
   searchReleases,
   searchReleasesWithFallback
 };
