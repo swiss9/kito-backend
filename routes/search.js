@@ -142,6 +142,32 @@ function groupByFranchise(items) {
   return results;
 }
 
+async function fetchTmdbSearchWithRetry(url, retries = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (res.status === 429) {
+        // Rate limited, wait and retry
+        const retryAfter = res.headers.get('Retry-After');
+        const waitMs = retryAfter ? parseInt(retryAfter) * 1000 : 1000 * attempt;
+        await new Promise(r => setTimeout(r, waitMs));
+        continue;
+      }
+      if (!res.ok) {
+        throw new Error(`TMDB HTTP ${res.status}`);
+      }
+      return await res.json();
+    } catch (err) {
+      lastError = err;
+      if (attempt < retries) {
+        await new Promise(r => setTimeout(r, 500 * attempt));
+      }
+    }
+  }
+  throw lastError || new Error('TMDB request failed');
+}
+
 const searchSchema = Joi.object({
   q: Joi.string().trim().min(1).max(200).required(),
   category: Joi.string().valid('anime', 'tokusatsu', 'any').default('any'),
@@ -222,17 +248,21 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
           url.searchParams.set('language', 'en-US');
           url.searchParams.set('query', q);
           url.searchParams.set('page', 1);
-          const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-          if (res.ok) {
-            const data = await res.json();
+
+          try {
+            const data = await fetchTmdbSearchWithRetry(url.toString());
             const results = (data.results || []).filter(item => item.original_language === 'ja');
             const items = results.map(item => mediaToCard(normalizeTmdbMedia(item, catId)));
             tokusatsuItems.push(...items);
+          } catch (err) {
+            console.warn(`TMDB search ${type} failed: ${err.message}`);
+            // Continue with next type or empty
           }
         }
         allResults.push(...tokusatsuItems);
       } catch (err) {
-        console.warn(`TMDB error: ${err.message}`);
+        console.warn(`Tokusatsu TMDB error: ${err.message}`);
+        // Do not throw, just no results
       }
     }
   }
