@@ -29,7 +29,6 @@ const aiSearchSchema = Joi.object({
 
 async function fallbackFetchAnimeByTitle(title, categoryId) {
   let media = null;
-
   try {
     const jikanResults = await searchJikan(title);
     if (jikanResults.length > 0) {
@@ -38,7 +37,6 @@ async function fallbackFetchAnimeByTitle(title, categoryId) {
   } catch (err) {
     console.warn(`Jikan fallback failed: ${err.message}`);
   }
-
   if (process.env.TMDB_API_KEY) {
     try {
       const tmdbResults = await fetchTmdb('search/tv', { query: title, page: 1 });
@@ -50,8 +48,26 @@ async function fallbackFetchAnimeByTitle(title, categoryId) {
       console.warn(`TMDB fallback failed: ${err.message}`);
     }
   }
-
   return null;
+}
+
+function pickBestRelease(releases) {
+  if (!releases.length) return null;
+  const order = {
+    [CoverageType.COMPLETE]: 0,
+    [CoverageType.PARTIAL]: 1,
+    [CoverageType.SINGLE]: 2,
+    [CoverageType.UNKNOWN]: 3,
+  };
+  const confidenceOrder = { high: 0, medium: 1, low: 2 };
+  const sorted = [...releases].sort((a, b) => {
+    const covDiff = (order[a.coverageType] ?? 3) - (order[b.coverageType] ?? 3);
+    if (covDiff !== 0) return covDiff;
+    const confDiff = (confidenceOrder[a.confidence] ?? 3) - (confidenceOrder[b.confidence] ?? 3);
+    if (confDiff !== 0) return confDiff;
+    return b.score - a.score;
+  });
+  return sorted[0];
 }
 
 router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (req, res) => {
@@ -62,9 +78,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
   const title = req.query.title || '';
 
   const config = getCategory(categoryId);
-  if (!config) {
-    throw new ApiError(400, 'Invalid category', 'INVALID_CATEGORY');
-  }
+  if (!config) throw new ApiError(400, 'Invalid category', 'INVALID_CATEGORY');
 
   const cacheKey = `releases:${categoryId}:${mediaId}`;
   const cached = await getCache(cacheKey);
@@ -86,7 +100,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
         const query = `
           query($id: Int) {
             Media(id: $id) {
-              id title { romaji english native } synonyms seasonYear coverImage { medium large } format episodes chapters status genres
+              id title { romaji english native } synonyms seasonYear coverImage { medium large } format episodes chapters status genres isAdult
               relations {
                 edges {
                   relationType
@@ -125,9 +139,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
         if (title) mediaObject = await fallbackFetchAnimeByTitle(title, categoryId);
       }
     } else if (provider === 'tmdb') {
-      if (!process.env.TMDB_API_KEY) {
-        throw new ApiError(503, 'TMDB API key not configured', 'TMDB_KEY_MISSING');
-      }
+      if (!process.env.TMDB_API_KEY) throw new ApiError(503, 'TMDB API key not configured', 'TMDB_KEY_MISSING');
       try {
         const mediaType = config.mediaType === MediaType.MOVIE ? 'movie' : 'tv';
         const url = `https://api.themoviedb.org/3/${mediaType}/${providerId}?api_key=${process.env.TMDB_API_KEY}&language=en-US`;
@@ -144,18 +156,16 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
 
     if (mediaObject) {
       releases = await searchReleases(mediaObject);
-      await setCache(cacheKey, { media: mediaObject, releases }, 43200); // 12 hours
+      await setCache(cacheKey, { media: mediaObject, releases }, 43200);
     }
   }
 
-  if (!mediaObject) {
-    throw new ApiError(404, 'Media not found', 'MEDIA_NOT_FOUND');
-  }
+  if (!mediaObject) throw new ApiError(404, 'Media not found', 'MEDIA_NOT_FOUND');
 
   const high = releases.filter(r => r.confidence === 'high');
   const med = releases.filter(r => r.confidence === 'medium');
   const low = releases.filter(r => r.confidence === 'low');
-  const best = high.length > 0 ? high[0] : med.length > 0 ? med[0] : low.length > 0 ? low[0] : null;
+  const best = pickBestRelease(releases);
 
   const start = (page - 1) * limit;
   const end = start + limit;
@@ -219,15 +229,11 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
 }));
 
 router.post('/recommendations', validate(recommendationsSchema, 'body'), asyncHandler(async (req, res) => {
-  // Placeholder for future recommendation logic
   res.json({ items: [] });
 }));
 
 router.post('/ai-search', validate(aiSearchSchema, 'body'), asyncHandler(async (req, res) => {
-  if (!process.env.GROQ_API_KEY) {
-    throw new ApiError(503, 'Groq not configured', 'GROQ_NOT_CONFIGURED');
-  }
-
+  if (!process.env.GROQ_API_KEY) throw new ApiError(503, 'Groq not configured', 'GROQ_NOT_CONFIGURED');
   const prompt = req.body.prompt;
   const result = await callGroq(`Parse this user media search prompt into structured JSON filters: "${prompt}"`);
   res.json({ success: true, filters: result });
@@ -236,10 +242,7 @@ router.post('/ai-search', validate(aiSearchSchema, 'body'), asyncHandler(async (
 async function callGroq(prompt) {
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
-      'Content-Type': 'application/json'
-    },
+    headers: { 'Authorization': `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: 'llama-3.1-8b-instant',
       messages: [
