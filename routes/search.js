@@ -214,19 +214,23 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
 
     if (catId === 'tokusatsu' && process.env.TMDB_API_KEY) {
       try {
-        const mediaType = 'tv';
-        const url = new URL(`https://api.themoviedb.org/3/search/${mediaType}`);
-        url.searchParams.set('api_key', process.env.TMDB_API_KEY);
-        url.searchParams.set('language', 'en-US');
-        url.searchParams.set('query', q);
-        url.searchParams.set('page', 1);
-        const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-        if (res.ok) {
-          const data = await res.json();
-          const results = (data.results || []).filter(item => item.original_language === 'ja');
-          const items = results.map(item => mediaToCard(normalizeTmdbMedia(item, catId)));
-          allResults.push(...items);
+        const mediaTypes = ['tv', 'movie'];
+        let tokusatsuItems = [];
+        for (const type of mediaTypes) {
+          const url = new URL(`https://api.themoviedb.org/3/search/${type}`);
+          url.searchParams.set('api_key', process.env.TMDB_API_KEY);
+          url.searchParams.set('language', 'en-US');
+          url.searchParams.set('query', q);
+          url.searchParams.set('page', 1);
+          const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+          if (res.ok) {
+            const data = await res.json();
+            const results = (data.results || []).filter(item => item.original_language === 'ja');
+            const items = results.map(item => mediaToCard(normalizeTmdbMedia(item, catId)));
+            tokusatsuItems.push(...items);
+          }
         }
+        allResults.push(...tokusatsuItems);
       } catch (err) {
         console.warn(`TMDB error: ${err.message}`);
       }
@@ -273,7 +277,6 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
       return true;
     });
 
-    // Hide standalone movies if any collection likely includes movies
     const collectionsForMovieCheck = unique.filter(item => item.collection);
     if (collectionsForMovieCheck.length > 0) {
       const collectionIndicators = /movie collection|complete series.*movies|movies.*complete series|full collection|completed/i;
