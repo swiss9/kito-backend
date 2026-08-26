@@ -8,6 +8,28 @@ const { categoryConfig, MediaType } = require('../config');
 const { fetchAniList, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia, mediaToCard } = require('../services/metadataService');
 const { stripSeasonInfo } = require('../utils');
 
+const queryCorrections = {
+  'yourname': 'your name',
+  'kamenrider': 'kamen rider',
+  'supersentai': 'super sentai',
+  'ultraman': 'ultraman',
+  'dragonball': 'dragon ball',
+  'dragonballz': 'dragon ball z',
+  'dragonballsuper': 'dragon ball super',
+  'narutoshippuden': 'naruto shippuden',
+  'onepiece': 'one piece',
+  'attackontitan': 'attack on titan'
+};
+
+function normalizeSearchQuery(raw) {
+  const trimmed = raw.trim();
+  const lower = trimmed.toLowerCase();
+  if (queryCorrections[lower]) {
+    return queryCorrections[lower];
+  }
+  return trimmed;
+}
+
 function getCategories() { return Object.keys(categoryConfig); }
 function getCategory(id) { return categoryConfig[id] || null; }
 
@@ -124,7 +146,7 @@ function groupByFranchise(items) {
       id: `franchise:${base}`,
       title: cleanTitle,
       aliases,
-      subtitle: `${seasons.length} seasons${minYear ? ` · ${minYear}${maxYear && maxYear !== minYear ? '–' + maxYear : ''}` : ''}`,
+      subtitle: `${seasons.length} seasons${minYear ? ` Â· ${minYear}${maxYear && maxYear !== minYear ? 'â€“' + maxYear : ''}` : ''}`,
       category: first.category,
       mediaType: 'collection',
       year: minYear,
@@ -142,13 +164,20 @@ function groupByFranchise(items) {
   return results;
 }
 
+const searchSchema = Joi.object({
+  q: Joi.string().trim().min(1).max(200).required(),
+  category: Joi.string().valid('anime', 'tokusatsu', 'any').default('any'),
+  page: Joi.number().integer().min(1).default(1),
+  perPage: Joi.number().integer().min(1).max(50).default(20),
+  group: Joi.boolean().default(false)
+});
+
 async function fetchTmdbSearchWithRetry(url, retries = 3) {
   let lastError;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
       if (res.status === 429) {
-        // Rate limited, wait and retry
         const retryAfter = res.headers.get('Retry-After');
         const waitMs = retryAfter ? parseInt(retryAfter) * 1000 : 1000 * attempt;
         await new Promise(r => setTimeout(r, waitMs));
@@ -168,18 +197,12 @@ async function fetchTmdbSearchWithRetry(url, retries = 3) {
   throw lastError || new Error('TMDB request failed');
 }
 
-const searchSchema = Joi.object({
-  q: Joi.string().trim().min(1).max(200).required(),
-  category: Joi.string().valid('anime', 'tokusatsu', 'any').default('any'),
-  page: Joi.number().integer().min(1).default(1),
-  perPage: Joi.number().integer().min(1).max(50).default(20),
-  group: Joi.boolean().default(false)
-});
-
 router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, res) => {
   const { q, category, page, perPage, group } = req.query;
 
-  const normalizedQ = q.trim().toLowerCase();
+  const normalizedQuery = normalizeSearchQuery(q);
+  const normalizedQ = normalizedQuery.trim().toLowerCase();
+
   const cacheKey = `search:${category}:${normalizedQ}:page:${page}:perPage:${perPage}:group:${group}`;
   const cached = await getCache(cacheKey);
   if (cached) {
@@ -206,7 +229,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
             }
           }
         `;
-        const variables = { search: q, type: 'ANIME', page: 1, perPage: 50 };
+        const variables = { search: normalizedQuery, type: 'ANIME', page: 1, perPage: 50 };
         const data = await fetchAniList(query, variables);
         items = (data.Page.media || []).map(item => mediaToCard(normalizeAniListMedia(item, catId, [])));
       } catch (err) {
@@ -215,7 +238,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
 
       if (items.length === 0) {
         try {
-          const jikanData = await searchJikan(q);
+          const jikanData = await searchJikan(normalizedQuery);
           items = jikanData.map(item => mediaToCard(normalizeJikanMedia(item, catId)));
         } catch (err) {
           console.warn(`Jikan failed: ${err.message}`);
@@ -224,13 +247,13 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
 
       if (items.length === 0 && process.env.TMDB_API_KEY) {
         try {
-          let tmdbResults = await fetchTmdb('search/tv', { query: q, page: 1 });
+          let tmdbResults = await fetchTmdb('search/tv', { query: normalizedQuery, page: 1 });
           tmdbResults = tmdbResults.filter(i => i.genre_ids?.includes(16) && i.original_language === 'ja');
           if (!tmdbResults.length) {
-            const movieResults = await fetchTmdb('search/movie', { query: q, page: 1 });
+            const movieResults = await fetchTmdb('search/movie', { query: normalizedQuery, page: 1 });
             tmdbResults = movieResults.filter(i => i.genre_ids?.includes(16) && i.original_language === 'ja');
           }
-          items = tmdbResults.map(item => mediaToCard(normalizeTmdbMedia(item, catId)));
+          items = tmdbResults.map(item => mediaToCard(normalizeTmdbMedia(item, catId))).filter(Boolean);
         } catch (err) {
           console.warn(`TMDB fallback failed: ${err.message}`);
         }
@@ -242,33 +265,37 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
       try {
         const mediaTypes = ['tv', 'movie'];
         let tokusatsuItems = [];
+        const genreIds = [28, 12, 878, 14];
         for (const type of mediaTypes) {
           const url = new URL(`https://api.themoviedb.org/3/search/${type}`);
           url.searchParams.set('api_key', process.env.TMDB_API_KEY);
           url.searchParams.set('language', 'en-US');
-          url.searchParams.set('query', q);
+          url.searchParams.set('query', normalizedQuery);
           url.searchParams.set('page', 1);
 
           try {
             const data = await fetchTmdbSearchWithRetry(url.toString());
-            const results = (data.results || []).filter(item => item.original_language === 'ja');
-            const items = results.map(item => mediaToCard(normalizeTmdbMedia(item, catId)));
+            const results = (data.results || [])
+              .filter(item =>
+                item.original_language === 'ja' &&
+                item.genre_ids &&
+                item.genre_ids.some(id => genreIds.includes(id))
+              );
+            const items = results.map(item => mediaToCard(normalizeTmdbMedia(item, catId))).filter(Boolean);
             tokusatsuItems.push(...items);
           } catch (err) {
             console.warn(`TMDB search ${type} failed: ${err.message}`);
-            // Continue with next type or empty
           }
         }
         allResults.push(...tokusatsuItems);
       } catch (err) {
         console.warn(`Tokusatsu TMDB error: ${err.message}`);
-        // Do not throw, just no results
       }
     }
   }
 
-  allResults = allResults.filter(item => item.status !== 'NOT_YET_RELEASED');
-  allResults = allResults.filter(item => !item.isAdult);
+  allResults = allResults.filter(item => item && item.status !== 'NOT_YET_RELEASED');
+  allResults = allResults.filter(item => item && !item.isAdult);
 
   let unique = [];
   if (group) {
