@@ -179,8 +179,12 @@ async function searchAnimeReleases(media) {
     }
   }
 
+  // Determine Nyaa category based on media.category
+  const nyaaCategory = media.category === 'tokusatsu' ? 'tokusatsu' : 'anime';
+  const nyaaSearch = (title) => searchNyaaRSS(title, nyaaCategory);
+
   const sourceList = ['nyaa_rss'];
-  const searchFnMap = { nyaa_rss: searchNyaaRSS };
+  const searchFnMap = { nyaa_rss: nyaaSearch };
   return searchWithAggregation(media, sourceList, queryTiers, searchFnMap);
 }
 
@@ -213,31 +217,23 @@ async function searchReleasesWithFallback(media) {
   let primaryResults = [];
   let fallbackResults = [];
 
-  if (categoryId === 'anime') {
-    primaryResults = await searchAnimeReleases(media);
-    if (!primaryResults.some(r => (r.seeders || 0) >= 5) && primaryResults.length > 0) {
-      try {
+  // Both anime and tokusatsu use multi-query Nyaa search as primary
+  primaryResults = await searchAnimeReleases(media);
+
+  // Check if we have good seeders
+  const hasGoodRelease = primaryResults.some(r => (r.seeders || 0) >= 5);
+
+  if (!hasGoodRelease) {
+    try {
+      if (categoryId === 'anime') {
         const raw = await searchAnimeGarden(media.title);
         fallbackResults = raw.map(r => processRelease(r, media)).filter(r => r !== null);
-      } catch (err) {
-        console.warn('AnimeGarden fallback failed:', err.message);
-      }
-    }
-  } else if (categoryId === 'tokusatsu') {
-    primaryResults = await searchNyaaRSS(media.title, 'tokusatsu')
-      .then(raw => raw.map(r => processRelease(r, media)).filter(r => r !== null))
-      .catch(err => {
-        console.warn('Nyaa primary failed:', err.message);
-        return [];
-      });
-
-    if (!primaryResults.some(r => (r.seeders || 0) >= 5)) {
-      try {
+      } else if (categoryId === 'tokusatsu') {
         const raw = await searchTorrentClaw(media.title);
         fallbackResults = raw.map(r => processRelease(r, media)).filter(r => r !== null);
-      } catch (err) {
-        console.warn('TorrentClaw fallback failed:', err.message);
       }
+    } catch (err) {
+      console.warn(`Fallback search failed:`, err.message);
     }
   }
 
