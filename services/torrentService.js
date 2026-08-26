@@ -161,7 +161,6 @@ async function searchAnimeReleases(media) {
     extraQueries.length ? extraQueries : []
   ].filter(tier => tier.length > 0);
 
-  // Batch variations for tokusatsu
   if (media.category === 'tokusatsu') {
     const batchVariants = [
       `${baseTitle} Complete`,
@@ -179,6 +178,7 @@ async function searchAnimeReleases(media) {
     if (franchiseTitle && franchiseTitle !== primary && franchiseTitle.length > 2) {
       queryTiers.push([franchiseTitle]);
       queryTiers.push([`${franchiseTitle} Movie`]);
+      queryTiers.push([`${franchiseTitle} OVA`]);
       queryTiers.push([`${franchiseTitle} Film`]);
       queryTiers.push([`${primary} Movie`]);
       if (media.year) queryTiers.push([`${franchiseTitle} ${media.year}`]);
@@ -192,9 +192,18 @@ async function searchAnimeReleases(media) {
     }
   }
 
-  // Determine Nyaa category based on media.category
-  const nyaaCategory = media.category === 'tokusatsu' ? 'tokusatsu' : 'anime';
-  const nyaaSearch = (title) => searchNyaaRSS(title, nyaaCategory);
+  const nyaaSearch = async (title) => {
+    if (media.category === 'tokusatsu') {
+      const primaryResults = await searchNyaaRSS(title, 'tokusatsu');
+      const hasGood = primaryResults.some(r => (r.seeders || 0) >= 5);
+      if (!hasGood && primaryResults.length < 3) {
+        const fallbackResults = await searchNyaaRSS(title, 'anime');
+        return [...primaryResults, ...fallbackResults];
+      }
+      return primaryResults;
+    }
+    return searchNyaaRSS(title, 'anime');
+  };
 
   const sourceList = ['nyaa_rss'];
   const searchFnMap = { nyaa_rss: nyaaSearch };
@@ -230,10 +239,8 @@ async function searchReleasesWithFallback(media) {
   let primaryResults = [];
   let fallbackResults = [];
 
-  // Both anime and tokusatsu use multi-query Nyaa search as primary
   primaryResults = await searchAnimeReleases(media);
 
-  // Check if we have good seeders
   const hasGoodRelease = primaryResults.some(r => (r.seeders || 0) >= 5);
 
   if (!hasGoodRelease) {
