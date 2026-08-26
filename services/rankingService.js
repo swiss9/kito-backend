@@ -173,21 +173,36 @@ function getMediaSeason(media) {
   return 1;
 }
 
+function titleMatches(releaseTitle, mediaTitles) {
+  for (const mt of mediaTitles) {
+    if (!mt) continue;
+    // Whole phrase match with word boundaries
+    const regex = new RegExp(`\\b${escapeRegex(mt)}\\b`, 'i');
+    if (regex.test(releaseTitle)) return true;
+  }
+  return false;
+}
+
 function validateRelease(parsed, media) {
   const releaseTitle = normalizeTitle(parsed.title || extractReleaseTitle(parsed.originalName))
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const mediaTitles = [media.title, ...media.aliases]
-    .map(t => normalizeTitle(t).normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
-  const forbiddenTitles = getForbiddenTitles(media);
+    .map(t => normalizeTitle(t).normalize('NFD').replace(/[\u0300-\u036f]/g, ''))
+    .filter(Boolean);
 
-  let titleMatch = false;
-  for (const mt of mediaTitles) {
-    if (releaseTitle.includes(mt)) {
-      titleMatch = true;
-      break;
+  if (!titleMatches(releaseTitle, mediaTitles)) return { valid: false, reason: 'title_mismatch' };
+
+  const forbiddenTitles = getForbiddenTitles(media);
+  for (const forb of forbiddenTitles) {
+    if (!forb) continue;
+    const forbRegex = new RegExp(`\\b${escapeRegex(forb)}\\b`, 'i');
+    if (forbRegex.test(releaseTitle)) {
+      const mediaContainsForbidden = mediaTitles.some(mt => forbRegex.test(mt));
+      if (!mediaContainsForbidden) {
+        return { valid: false, reason: 'forbidden_relation' };
+      }
     }
   }
-  if (!titleMatch) return { valid: false, reason: 'title_mismatch' };
 
   const mediaSeason = getMediaSeason(media);
   const releaseSeason = parsed.season ?? 1;
@@ -204,17 +219,6 @@ function validateRelease(parsed, media) {
         matchesSeason = new RegExp(romanString, 'i').test(relTitleNorm);
       }
       if (!matchesSeason) return { valid: false, reason: 'season_mismatch' };
-    }
-  }
-
-  for (const forb of forbiddenTitles) {
-    if (!forb) continue;
-    const forbRegex = new RegExp(`\\b${escapeRegex(forb)}\\b`, 'i');
-    if (forbRegex.test(releaseTitle)) {
-      const mediaContainsForbidden = mediaTitles.some(mt => forbRegex.test(mt));
-      if (!mediaContainsForbidden) {
-        return { valid: false, reason: 'forbidden_relation' };
-      }
     }
   }
 
