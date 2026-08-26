@@ -4,6 +4,12 @@ const { setCache, getCached, normalizeTitle, extractMagnetHash, stripSeasonInfo 
 const { processRelease, getMediaSeason } = require('./rankingService');
 const { httpGet } = require('./httpClient');
 
+function extractFranchiseTitle(title) {
+  const parts = title.split(/[-:]/);
+  if (parts.length === 0) return stripSeasonInfo(title);
+  return stripSeasonInfo(parts[0].trim());
+}
+
 async function searchTorrentClaw(title) {
   const baseUrl = 'https://torrentclaw.com/api/search';
   const params = new URLSearchParams({ q: title, category: 'all', limit: 100 });
@@ -87,8 +93,6 @@ async function searchAnimeGarden(title) {
   return results;
 }
 
-// Removed searchYTS and searchEZTV entirely.
-
 async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap) {
   const allResults = [];
 
@@ -153,7 +157,16 @@ async function searchAnimeReleases(media) {
     extraQueries.length ? extraQueries : []
   ].filter(tier => tier.length > 0);
 
-  // Only Nyaa as primary source
+  // For movies, add franchise-level search terms to catch releases that omit the full subtitle
+  if (media.mediaType === 'movie') {
+    const franchiseTitle = extractFranchiseTitle(primary);
+    if (franchiseTitle && franchiseTitle !== primary && franchiseTitle.length > 2) {
+      queryTiers.push([franchiseTitle]);
+      queryTiers.push([`${franchiseTitle} Movie`]);
+      if (media.year) queryTiers.push([`${franchiseTitle} ${media.year}`]);
+    }
+  }
+
   const sourceList = ['nyaa_rss'];
   const searchFnMap = {
     nyaa_rss: searchNyaaRSS
@@ -165,7 +178,6 @@ async function searchReleases(media) {
   const { categoryConfig } = require('../config');
   const category = categoryConfig[media.category];
   if (!category) return [];
-  // Both anime and tokusatsu use the same Nyaa-based search
   if (category.id === 'anime' || category.id === 'tokusatsu') {
     return searchAnimeReleases(media);
   }
