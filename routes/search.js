@@ -175,7 +175,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
             Page(page: $page, perPage: $perPage) {
               pageInfo { hasNextPage }
               media(search: $search, type: $type, sort: SEARCH_MATCH) {
-                id title { romaji english native } synonyms seasonYear coverImage { medium large } format episodes chapters status genres
+                id title { romaji english native } synonyms seasonYear coverImage { medium large } format episodes chapters status genres isAdult
               }
             }
           }
@@ -234,6 +234,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   }
 
   allResults = allResults.filter(item => item.status !== 'NOT_YET_RELEASED');
+  allResults = allResults.filter(item => !item.isAdult);
 
   let unique = [];
   if (group) {
@@ -264,6 +265,13 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
     const standaloneMovies = movieItems.filter(m => !attachedMovieIds.has(m.id));
 
     unique = [...collectionsWithMovies, ...filteredStandaloneAnime, ...otherSeries, ...standaloneMovies];
+
+    const seen = new Set();
+    unique = unique.filter(item => {
+      if (seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    });
   } else {
     unique = allResults;
   }
