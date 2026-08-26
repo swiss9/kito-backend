@@ -29,7 +29,7 @@ async function searchTorrentClaw(title) {
     leechers: t.leechers || 0,
     uploader: t.uploader || t.uploaderName || t.username || ''
   }));
-  await setCache(cacheKey, results, 1800);
+  await setCache(cacheKey, results, 3600); // 1 hour TTL (was 30 min)
   return results;
 }
 
@@ -157,7 +157,6 @@ async function searchAnimeReleases(media) {
     extraQueries.length ? extraQueries : []
   ].filter(tier => tier.length > 0);
 
-  // For movies, add franchise-level search terms to catch releases that omit the full subtitle
   if (media.mediaType === 'movie') {
     const franchiseTitle = extractFranchiseTitle(primary);
     if (franchiseTitle && franchiseTitle !== primary && franchiseTitle.length > 2) {
