@@ -340,6 +340,13 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
       const targetMediaType = topResult.mediaType;
       console.log(`[filter] Restricting to media type ${targetMediaType} (top result: ${topResult.title}, popularity: ${topResult.popularity || 0})`);
       allResults = allResults.filter(item => item.mediaType === targetMediaType);
+
+      if (targetMediaType === MediaType.MOVIE) {
+        allResults = allResults.filter(item => {
+          const titles = [item.title, ...(item.aliases || [])].map(t => normalizeTitle(t));
+          return titles.some(t => t === normalizedQueryTitle);
+        });
+      }
     }
   } else {
     console.log(`[filter] No exact match, skipping phrase filter`);
