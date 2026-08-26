@@ -161,6 +161,19 @@ async function searchAnimeReleases(media) {
     extraQueries.length ? extraQueries : []
   ].filter(tier => tier.length > 0);
 
+  // Batch variations for tokusatsu
+  if (media.category === 'tokusatsu') {
+    const batchVariants = [
+      `${baseTitle} Complete`,
+      `${baseTitle} Complete Series`,
+      `${baseTitle} Complete Batch`,
+      `${primary} Complete`,
+      `${primary} Complete Series`,
+      `${primary} Complete Batch`
+    ];
+    queryTiers.push(batchVariants);
+  }
+
   if (media.mediaType === 'movie' || media.format === 'SPECIAL') {
     const franchiseTitle = extractFranchiseTitle(primary);
     if (franchiseTitle && franchiseTitle !== primary && franchiseTitle.length > 2) {
