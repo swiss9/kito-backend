@@ -160,19 +160,28 @@ function normalizeJikanMedia(item, categoryId) {
 }
 
 function normalizeTmdbMedia(item, categoryId) {
-  const isMovie = item.media_type === 'movie' || item.release_date;
-  let poster = item.poster_path ? `${TMDB_IMAGE_BASE}${item.poster_path}` : '';
-  if (poster && poster.startsWith('http://')) poster = poster.replace('http://', 'https://');
+  const isMovie = item.media_type === 'movie' || Boolean(item.release_date);
+  let poster = '';
+  if (item.poster_path) {
+    poster = `${TMDB_IMAGE_BASE}${item.poster_path}`;
+    if (poster.startsWith('http://')) poster = poster.replace('http://', 'https://');
+  }
+
+  const releaseDate = item.release_date || item.first_air_date || '';
+  const year = releaseDate ? releaseDate.substring(0, 4) : null;
+
+  const genres = Array.isArray(item.genre_ids) ? item.genre_ids : [];
+
   return {
     id: `tmdb:${item.id}`,
     title: item.title || item.name || 'Unknown',
     aliases: [item.title || item.name || ''],
-    year: (item.release_date || item.first_air_date || '').substring(0, 4) || null,
+    year,
     mediaType: isMovie ? MediaType.MOVIE : MediaType.SERIES,
     episodeCount: null,
     status: item.status || 'UNKNOWN',
     poster,
-    genres: item.genre_ids || [],
+    genres,
     provider: 'tmdb',
     providerId: item.id,
     category: categoryId,
@@ -183,21 +192,29 @@ function normalizeTmdbMedia(item, categoryId) {
 }
 
 function mediaToCard(media) {
+  if (!media || !media.id || !media.title) {
+    return null;
+  }
+
+  const subtitle = media.mediaType === MediaType.MOVIE
+    ? `Film · ${media.year || 'Latest'}`
+    : `Series · ${media.year || 'Latest'}`;
+
   return {
     id: media.id,
     title: media.title,
-    aliases: media.aliases,
-    subtitle: media.mediaType === MediaType.MOVIE ? `Film · ${media.year || 'Latest'}` : `Series · ${media.year || 'Latest'}`,
+    aliases: media.aliases || [],
+    subtitle,
     category: media.category,
     mediaType: media.mediaType,
     year: media.year,
-    episodeCount: media.episodeCount,
-    poster: media.poster,
+    episodeCount: media.episodeCount || null,
+    poster: media.poster || '',
     provider: media.provider,
     providerId: media.providerId,
-    status: media.status,
+    status: media.status || 'UNKNOWN',
     format: media.format,
-    isAdult: media.isAdult,
+    isAdult: media.isAdult || false,
     relationsRaw: media.relationsRaw || [],
     hasRelease: false,
     hasBatch: false
