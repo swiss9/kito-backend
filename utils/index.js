@@ -1,25 +1,3 @@
-const CACHE_TTL = 12 * 60 * 60 * 1000;
-const MAX_CACHE_SIZE = 1000;
-const cache = new Map();
-
-function getCached(key) {
-  const entry = cache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.timestamp > CACHE_TTL) {
-    cache.delete(key);
-    return null;
-  }
-  return entry.data;
-}
-
-function setCache(key, data) {
-  if (cache.size >= MAX_CACHE_SIZE) {
-    const firstKey = cache.keys().next().value;
-    if (firstKey) cache.delete(firstKey);
-  }
-  cache.set(key, { data, timestamp: Date.now() });
-}
-
 function normalizeTitle(title) {
   return title
     .toLowerCase()
@@ -29,22 +7,10 @@ function normalizeTitle(title) {
 }
 
 function stripSeasonInfo(title) {
-  const normalized = normalizeTitle(title);
-  const seasonPatterns = [
-    /\b(s\d+)\b/i,
-    /\b(season\s*\d+)\b/i,
-    /\b(\d+(st|nd|rd|th)\s*season)\b/i,
-    /\b(part\s*\d+)\b/i,
-    /\b(second season|third season|fourth season|fifth season|sixth season|seventh season|eighth season|ninth season|tenth season)\b/i,
-    /\b(\d+)\s*(?:st|nd|rd|th)\s*season\b/i,
-    /\b(season\s*(one|two|three|four|five|six|seven|eight|nine|ten))\b/i,
-    /\b(cour\s*\d+)\b/i
-  ];
-  let result = normalized;
-  for (const pattern of seasonPatterns) {
-    result = result.replace(pattern, ' ');
-  }
-  return result.replace(/\s+/g, ' ').trim();
+  return normalizeTitle(title)
+    .replace(/\b(s\d+|season \d+|\d+(st|nd|rd|th) season|part \d+)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function extractReleaseTitle(name) {
@@ -74,8 +40,6 @@ function getReleaseGroup(name) {
 }
 
 module.exports = {
-  getCached,
-  setCache,
   normalizeTitle,
   stripSeasonInfo,
   extractReleaseTitle,
