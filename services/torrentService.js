@@ -29,7 +29,7 @@ async function searchTorrentClaw(title) {
     leechers: t.leechers || 0,
     uploader: t.uploader || t.uploaderName || t.username || ''
   }));
-  await setCache(cacheKey, results, 3600); // 1 hour TTL (was 30 min)
+  await setCache(cacheKey, results, 3600);
   return results;
 }
 
@@ -40,8 +40,12 @@ const ANIME_TRACKERS = [
   'udp://exodus.desync.com:6969/announce'
 ].map(tr => `&tr=${encodeURIComponent(tr)}`).join('');
 
-async function searchNyaaRSS(title) {
-  const url = `https://nyaa.si/?page=rss&c=1_2&q=${encodeURIComponent(title)}`;
+async function searchNyaaRSS(title, category = 'anime') {
+  let catParam = '1_2';
+  if (category === 'tokusatsu') {
+    catParam = '4_1';
+  }
+  const url = `https://nyaa.si/?page=rss&c=${catParam}&q=${encodeURIComponent(title)}`;
   const cacheKey = `nyaa:${url}`;
   const cached = await getCached(cacheKey);
   if (cached) return cached;
@@ -157,19 +161,26 @@ async function searchAnimeReleases(media) {
     extraQueries.length ? extraQueries : []
   ].filter(tier => tier.length > 0);
 
-  if (media.mediaType === 'movie') {
+  if (media.mediaType === 'movie' || media.format === 'SPECIAL') {
     const franchiseTitle = extractFranchiseTitle(primary);
     if (franchiseTitle && franchiseTitle !== primary && franchiseTitle.length > 2) {
       queryTiers.push([franchiseTitle]);
       queryTiers.push([`${franchiseTitle} Movie`]);
+      queryTiers.push([`${franchiseTitle} Film`]);
+      queryTiers.push([`${primary} Movie`]);
       if (media.year) queryTiers.push([`${franchiseTitle} ${media.year}`]);
+      if (media.format === 'SPECIAL') {
+        queryTiers.push([`${franchiseTitle} SD`]);
+        queryTiers.push([`${franchiseTitle} Special`]);
+      }
+      if (primary !== franchiseTitle) {
+        queryTiers.push([primary]);
+      }
     }
   }
 
   const sourceList = ['nyaa_rss'];
-  const searchFnMap = {
-    nyaa_rss: searchNyaaRSS
-  };
+  const searchFnMap = { nyaa_rss: searchNyaaRSS };
   return searchWithAggregation(media, sourceList, queryTiers, searchFnMap);
 }
 
@@ -198,33 +209,36 @@ function mergeReleases(primary, fallback) {
 }
 
 async function searchReleasesWithFallback(media) {
-  const primaryResults = await searchReleases(media);
-  const MIN_SEEDERS = 5;
-
-  const hasGoodRelease = primaryResults.some(r => (r.seeders || 0) >= MIN_SEEDERS);
-  if (primaryResults.length > 0 && hasGoodRelease) {
-    return primaryResults;
-  }
-
-  let fallbackResults = [];
   const categoryId = media.category;
-  try {
-    const title = media.title || (media.aliases && media.aliases[0]) || '';
-    if (title) {
-      if (categoryId === 'anime') {
-        const raw = await searchAnimeGarden(title);
-        fallbackResults = raw
-          .map(r => processRelease(r, media))
-          .filter(r => r !== null);
-      } else if (categoryId === 'tokusatsu') {
-        const raw = await searchTorrentClaw(title);
-        fallbackResults = raw
-          .map(r => processRelease(r, media))
-          .filter(r => r !== null);
+  let primaryResults = [];
+  let fallbackResults = [];
+
+  if (categoryId === 'anime') {
+    primaryResults = await searchAnimeReleases(media);
+    if (!primaryResults.some(r => (r.seeders || 0) >= 5) && primaryResults.length > 0) {
+      try {
+        const raw = await searchAnimeGarden(media.title);
+        fallbackResults = raw.map(r => processRelease(r, media)).filter(r => r !== null);
+      } catch (err) {
+        console.warn('AnimeGarden fallback failed:', err.message);
       }
     }
-  } catch (err) {
-    console.warn('Fallback search failed:', err.message);
+  } else if (categoryId === 'tokusatsu') {
+    primaryResults = await searchNyaaRSS(media.title, 'tokusatsu')
+      .then(raw => raw.map(r => processRelease(r, media)).filter(r => r !== null))
+      .catch(err => {
+        console.warn('Nyaa primary failed:', err.message);
+        return [];
+      });
+
+    if (!primaryResults.some(r => (r.seeders || 0) >= 5)) {
+      try {
+        const raw = await searchTorrentClaw(media.title);
+        fallbackResults = raw.map(r => processRelease(r, media)).filter(r => r !== null);
+      } catch (err) {
+        console.warn('TorrentClaw fallback failed:', err.message);
+      }
+    }
   }
 
   return mergeReleases(primaryResults, fallbackResults);
