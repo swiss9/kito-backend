@@ -1,8 +1,9 @@
-const { normalizeTitle, extractReleaseTitle, escapeRegex, wordBoundaryMatch, getReleaseGroup } = require('../utils');
+const { normalizeTitle, extractReleaseTitle, escapeRegex, getReleaseGroup } = require('../utils');
 const { CoverageType, MediaType, SEQUEL_KEYWORDS, TRUSTED_GROUPS } = require('../config');
 
 const FORMAT_KEYWORDS = new Set(['movie', 'film', 'ova', 'special']);
 const STOP_WORDS = new Set(['the', 'movie', 'film', 'ova', 'special', 'part', 'no', 'na', 'wa', 'to']);
+const SEQUEL_MARKERS = ['shippuden', 'shippuuden', 'boruto', 'next generations', 'gt', 'z'];
 
 function tokenize(title) {
   return normalizeTitle(title)
@@ -10,16 +11,45 @@ function tokenize(title) {
     .filter(word => !STOP_WORDS.has(word) && word.length > 0);
 }
 
-function titleMatches(releaseTitle, mediaTitles) {
+function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat = null, media = null) {
   const releaseTokens = tokenize(releaseTitle);
   const releaseSet = new Set(releaseTokens);
+  const releaseLower = releaseTitle.toLowerCase();
+
+  if (media && media.title) {
+    const mediaLower = media.title.toLowerCase();
+    const isShippuden = mediaLower.includes('shippuden') || mediaLower.includes('shippuuden');
+    const isBoruto = mediaLower.includes('boruto');
+    const isOriginal = !isShippuden && !isBoruto;
+    if (isOriginal) {
+      for (const marker of SEQUEL_MARKERS) {
+        if (releaseLower.includes(marker)) {
+          return false;
+        }
+      }
+    }
+  }
 
   for (const mt of mediaTitles) {
     if (!mt) continue;
     const mediaTokens = tokenize(mt);
     if (mediaTokens.length === 0) continue;
-    const allTokensPresent = mediaTokens.every(token => releaseSet.has(token));
-    if (allTokensPresent) return true;
+
+    if (mediaTokens.length <= 2) {
+      const allPresent = mediaTokens.every(token => releaseSet.has(token));
+      if (allPresent) {
+        if (mediaSeason !== null) {
+          const seasonInRelease = extractSeasonNumber(releaseTitle);
+          if (seasonInRelease !== null && seasonInRelease !== mediaSeason) {
+            continue;
+          }
+        }
+        return true;
+      }
+    } else {
+      const allPresent = mediaTokens.every(token => releaseSet.has(token));
+      if (allPresent) return true;
+    }
   }
   return false;
 }
@@ -201,7 +231,10 @@ function validateRelease(parsed, media) {
     .map(t => normalizeTitle(t).normalize('NFD').replace(/[\u0300-\u036f]/g, ''))
     .filter(Boolean);
 
-  if (!titleMatches(releaseTitle, mediaTitles)) return { valid: false, reason: 'title_mismatch' };
+  const mediaSeason = getMediaSeason(media);
+  if (!titleMatches(releaseTitle, mediaTitles, mediaSeason, media.format, media)) {
+    return { valid: false, reason: 'title_mismatch' };
+  }
 
   const forbiddenTitles = getForbiddenTitles(media);
   for (const forb of forbiddenTitles) {
@@ -215,7 +248,6 @@ function validateRelease(parsed, media) {
     }
   }
 
-  const mediaSeason = getMediaSeason(media);
   const releaseSeason = parsed.season ?? 1;
   if (releaseSeason !== mediaSeason) {
     if (mediaSeason === 1) {
