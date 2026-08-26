@@ -53,6 +53,7 @@ async function fallbackFetchAnimeByTitle(title, categoryId) {
 
 function pickBestRelease(releases) {
   if (!releases.length) return null;
+
   const order = {
     [CoverageType.COMPLETE]: 0,
     [CoverageType.PARTIAL]: 1,
@@ -60,13 +61,19 @@ function pickBestRelease(releases) {
     [CoverageType.UNKNOWN]: 3,
   };
   const confidenceOrder = { high: 0, medium: 1, low: 2 };
-  const sorted = [...releases].sort((a, b) => {
+  const MIN_SEEDERS = 5;
+
+  let candidates = releases.filter(r => (r.seeders || 0) >= MIN_SEEDERS);
+  if (!candidates.length) candidates = releases;
+
+  const sorted = [...candidates].sort((a, b) => {
     const covDiff = (order[a.coverageType] ?? 3) - (order[b.coverageType] ?? 3);
     if (covDiff !== 0) return covDiff;
     const confDiff = (confidenceOrder[a.confidence] ?? 3) - (confidenceOrder[b.confidence] ?? 3);
     if (confDiff !== 0) return confDiff;
     return b.score - a.score;
   });
+
   return sorted[0];
 }
 
