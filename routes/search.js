@@ -231,7 +231,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
             Page(page: $page, perPage: $perPage) {
               pageInfo { hasNextPage }
               media(search: $search, type: $type, sort: SEARCH_MATCH) {
-                id title { romaji english native } synonyms seasonYear coverImage { medium large } format episodes chapters status genres isAdult
+                id title { romaji english native } synonyms seasonYear coverImage { medium large } format episodes chapters status genres isAdult popularity
               }
             }
           }
@@ -320,21 +320,27 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   });
 
   if (exactMatchItems.length > 0) {
-    console.log(`[filter] Exact match found for "${normalizedQueryTitle}", applying phrase filter...`);
+    console.log(`[filter] Exact match found for "${normalizedQueryTitle}", applying filters...`);
     const phraseRegex = new RegExp(`\\b${escapeRegex(normalizedQueryTitle)}\\b`, 'i');
     allResults = allResults.filter(item => {
       const titles = [item.title, ...(item.aliases || [])].map(t => normalizeTitle(t));
       return titles.some(t => phraseRegex.test(t));
     });
 
-    // Sort: exact match first, then by year descending
     allResults.sort((a, b) => {
       const aExact = a.title === normalizedQueryTitle || (a.aliases || []).some(t => normalizeTitle(t) === normalizedQueryTitle);
       const bExact = b.title === normalizedQueryTitle || (b.aliases || []).some(t => normalizeTitle(t) === normalizedQueryTitle);
       if (aExact && !bExact) return -1;
       if (!aExact && bExact) return 1;
-      return (b.year || 0) - (a.year || 0);
+      return (b.popularity || 0) - (a.popularity || 0);
     });
+
+    const topResult = allResults[0];
+    if (topResult && (topResult.mediaType === MediaType.MOVIE || (topResult.popularity && topResult.popularity > 50))) {
+      const targetMediaType = topResult.mediaType;
+      console.log(`[filter] Restricting to media type ${targetMediaType} (top result: ${topResult.title}, popularity: ${topResult.popularity || 0})`);
+      allResults = allResults.filter(item => item.mediaType === targetMediaType);
+    }
   } else {
     console.log(`[filter] No exact match, skipping phrase filter`);
   }
