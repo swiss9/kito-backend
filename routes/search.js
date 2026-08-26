@@ -204,20 +204,17 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   const normalizedQuery = normalizeSearchQuery(q);
   const normalizedQ = normalizedQuery.trim().toLowerCase();
 
-  if (force) {
-    console.log(`[force] Bypassing cache for query "${normalizedQ}"`);
-  }
-
   const cacheKey = `search:${category}:${normalizedQ}:page:${page}:perPage:${perPage}:group:${group}`;
+
   if (!force) {
     const cached = await getCache(cacheKey);
     if (cached) {
       console.log(`[cache] HIT for "${normalizedQ}"`);
       return res.json(cached);
     }
+  } else {
+    console.log(`[force] Bypassing cache for "${normalizedQ}"`);
   }
-
-  console.log(`[search] Processing "${normalizedQ}"`);
 
   const categories = category === 'any' ? getCategories() : [category];
   let allResults = [];
@@ -323,24 +320,21 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   });
 
   if (exactMatchItems.length > 0) {
-    console.log(`[filter] Exact match found for "${normalizedQueryTitle}", filtering...`);
+    console.log(`[filter] Exact match found for "${normalizedQueryTitle}", applying phrase filter...`);
     const phraseRegex = new RegExp(`\\b${escapeRegex(normalizedQueryTitle)}\\b`, 'i');
-    let filtered = allResults.filter(item => {
+    allResults = allResults.filter(item => {
       const titles = [item.title, ...(item.aliases || [])].map(t => normalizeTitle(t));
       return titles.some(t => phraseRegex.test(t));
     });
 
-    if (filtered.length > 10) {
-      const mediaTypes = [...new Set(filtered.map(item => item.mediaType))];
-      if (mediaTypes.length > 1) {
-        const dominantType = mediaTypes
-          .map(type => ({ type, count: filtered.filter(i => i.mediaType === type).length }))
-          .sort((a, b) => b.count - a.count)[0].type;
-        filtered = filtered.filter(item => item.mediaType === dominantType);
-        console.log(`[filter] Reduced to media type ${dominantType} (${filtered.length} results)`);
-      }
-    }
-    allResults = filtered;
+    // Sort: exact match first, then by year descending
+    allResults.sort((a, b) => {
+      const aExact = a.title === normalizedQueryTitle || (a.aliases || []).some(t => normalizeTitle(t) === normalizedQueryTitle);
+      const bExact = b.title === normalizedQueryTitle || (b.aliases || []).some(t => normalizeTitle(t) === normalizedQueryTitle);
+      if (aExact && !bExact) return -1;
+      if (!aExact && bExact) return 1;
+      return (b.year || 0) - (a.year || 0);
+    });
   } else {
     console.log(`[filter] No exact match, skipping phrase filter`);
   }
@@ -421,8 +415,6 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
       ttlSeconds = 21600;
     }
     await setCache(cacheKey, responseData, ttlSeconds);
-  } else {
-    console.log(`[force] Not caching result for "${normalizedQ}"`);
   }
 
   res.json(responseData);
