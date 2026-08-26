@@ -36,6 +36,7 @@ async function searchAnilistByTitle(title) {
           episodes
           status
           genres
+          isAdult
         }
       }
     }
@@ -102,6 +103,7 @@ function normalizeAniListMedia(item, categoryId, relations = []) {
     providerId: item.id,
     category: categoryId,
     format: item.format,
+    isAdult: item.isAdult || false,
     relations: relations.map(r => ({
       id: r.node?.id,
       title: r.node?.title?.romaji || r.node?.title?.english || r.node?.title?.native || '',
@@ -135,6 +137,9 @@ function normalizeJikanMedia(item, categoryId) {
     'Not yet aired': 'NOT_YET_RELEASED'
   };
 
+  const isAdult = item.rating?.toLowerCase().includes('hentai') ||
+                  item.genres?.some(g => g.name?.toLowerCase() === 'hentai') || false;
+
   return {
     id: `jikan:${item.mal_id}`,
     title: item.title_english || item.title || item.title_japanese || 'Unknown',
@@ -149,6 +154,7 @@ function normalizeJikanMedia(item, categoryId) {
     providerId: item.mal_id,
     category: categoryId,
     format: type,
+    isAdult,
     relations: []
   };
 }
@@ -171,17 +177,17 @@ function normalizeTmdbMedia(item, categoryId) {
     providerId: item.id,
     category: categoryId,
     format: isMovie ? 'MOVIE' : 'TV',
+    isAdult: item.adult || false,
     relations: []
   };
 }
 
 function mediaToCard(media) {
-  const sub = media.mediaType === MediaType.MOVIE ? `Film · ${media.year || 'Latest'}` : `Series · ${media.year || 'Latest'}`;
   return {
     id: media.id,
     title: media.title,
     aliases: media.aliases,
-    subtitle: sub,
+    subtitle: media.mediaType === MediaType.MOVIE ? `Film · ${media.year || 'Latest'}` : `Series · ${media.year || 'Latest'}`,
     category: media.category,
     mediaType: media.mediaType,
     year: media.year,
@@ -191,6 +197,7 @@ function mediaToCard(media) {
     providerId: media.providerId,
     status: media.status,
     format: media.format,
+    isAdult: media.isAdult,
     relationsRaw: media.relationsRaw || [],
     hasRelease: false,
     hasBatch: false
