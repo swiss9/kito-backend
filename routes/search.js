@@ -272,6 +272,19 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
       seen.add(item.id);
       return true;
     });
+
+    // Hide standalone movies if any collection likely includes movies
+    const collectionsForMovieCheck = unique.filter(item => item.collection);
+    if (collectionsForMovieCheck.length > 0) {
+      const collectionIndicators = /movie collection|complete series.*movies|movies.*complete series|full collection|completed/i;
+      const hasCompleteWithMovies = collectionsForMovieCheck.some(c =>
+        c.title?.toLowerCase().includes('movie') ||
+        c.seasons?.some(s => collectionIndicators.test(s.title))
+      );
+      if (hasCompleteWithMovies) {
+        unique = unique.filter(item => !(item.mediaType === MediaType.MOVIE && !item.collection));
+      }
+    }
   } else {
     unique = allResults;
   }
