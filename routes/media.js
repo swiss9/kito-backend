@@ -6,13 +6,13 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
 const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, CoverageType, TRUSTED_GROUPS, MediaType } = require('../config');
-const { fetchAniList, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia } = require('../services/metadataService');
+const { fetchAniList, searchAnilistByTitle, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia } = require('../services/metadataService');
 const { searchReleasesWithFallback } = require('../services/torrentService');
 
 function getCategory(id) { return categoryConfig[id] || null; }
 
 const releasesSchema = Joi.object({
-  id: Joi.string().pattern(/^(anilist|jikan|tmdb):\d+$/).required(),
+  id: Joi.string().required(),
   category: Joi.string().valid('anime', 'tokusatsu').required(),
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(50).default(20),
@@ -53,7 +53,6 @@ async function fallbackFetchAnimeByTitle(title, categoryId) {
 
 function pickBestRelease(releases) {
   if (!releases.length) return null;
-
   const order = {
     [CoverageType.COMPLETE]: 0,
     [CoverageType.PARTIAL]: 1,
@@ -62,10 +61,8 @@ function pickBestRelease(releases) {
   };
   const confidenceOrder = { high: 0, medium: 1, low: 2 };
   const MIN_SEEDERS = 5;
-
   let candidates = releases.filter(r => (r.seeders || 0) >= MIN_SEEDERS);
   if (!candidates.length) candidates = releases;
-
   const sorted = [...candidates].sort((a, b) => {
     const covDiff = (order[a.coverageType] ?? 3) - (order[b.coverageType] ?? 3);
     if (covDiff !== 0) return covDiff;
@@ -73,19 +70,30 @@ function pickBestRelease(releases) {
     if (confDiff !== 0) return confDiff;
     return b.score - a.score;
   });
-
   return sorted[0];
 }
 
 router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (req, res) => {
-  const mediaId = req.query.id;
+  let mediaId = req.query.id;
   const categoryId = req.query.category;
   const page = req.query.page;
   const limit = req.query.limit;
-  const title = req.query.title || '';
+  let title = req.query.title || '';
 
   const config = getCategory(categoryId);
   if (!config) throw new ApiError(400, 'Invalid category', 'INVALID_CATEGORY');
+
+  if (mediaId.startsWith('franchise:')) {
+    if (!title) {
+      throw new ApiError(400, 'Title required for franchise ID', 'FRANCHISE_REQUIRES_TITLE');
+    }
+    const media = await searchAnilistByTitle(title);
+    if (!media) {
+      throw new ApiError(404, 'Media not found', 'MEDIA_NOT_FOUND');
+    }
+    mediaId = `anilist:${media.id}`;
+    title = media.title?.romaji || media.title?.english || title;
+  }
 
   const cacheKey = `releases:${categoryId}:${mediaId}`;
   const cached = await getCache(cacheKey);
