@@ -169,7 +169,8 @@ const searchSchema = Joi.object({
   category: Joi.string().valid('anime', 'tokusatsu', 'any').default('any'),
   page: Joi.number().integer().min(1).default(1),
   perPage: Joi.number().integer().min(1).max(50).default(20),
-  group: Joi.boolean().default(false)
+  group: Joi.boolean().default(false),
+  force: Joi.boolean().default(false)
 });
 
 async function fetchTmdbSearchWithRetry(url, retries = 3) {
@@ -198,16 +199,25 @@ async function fetchTmdbSearchWithRetry(url, retries = 3) {
 }
 
 router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, res) => {
-  const { q, category, page, perPage, group } = req.query;
+  const { q, category, page, perPage, group, force } = req.query;
 
   const normalizedQuery = normalizeSearchQuery(q);
   const normalizedQ = normalizedQuery.trim().toLowerCase();
 
-  const cacheKey = `search:${category}:${normalizedQ}:page:${page}:perPage:${perPage}:group:${group}`;
-  const cached = await getCache(cacheKey);
-  if (cached) {
-    return res.json(cached);
+  if (force) {
+    console.log(`[force] Bypassing cache for query "${normalizedQ}"`);
   }
+
+  const cacheKey = `search:${category}:${normalizedQ}:page:${page}:perPage:${perPage}:group:${group}`;
+  if (!force) {
+    const cached = await getCache(cacheKey);
+    if (cached) {
+      console.log(`[cache] HIT for "${normalizedQ}"`);
+      return res.json(cached);
+    }
+  }
+
+  console.log(`[search] Processing "${normalizedQ}"`);
 
   const categories = category === 'any' ? getCategories() : [category];
   let allResults = [];
@@ -313,6 +323,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   });
 
   if (exactMatchItems.length > 0) {
+    console.log(`[filter] Exact match found for "${normalizedQueryTitle}", filtering...`);
     const phraseRegex = new RegExp(`\\b${escapeRegex(normalizedQueryTitle)}\\b`, 'i');
     let filtered = allResults.filter(item => {
       const titles = [item.title, ...(item.aliases || [])].map(t => normalizeTitle(t));
@@ -326,9 +337,12 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
           .map(type => ({ type, count: filtered.filter(i => i.mediaType === type).length }))
           .sort((a, b) => b.count - a.count)[0].type;
         filtered = filtered.filter(item => item.mediaType === dominantType);
+        console.log(`[filter] Reduced to media type ${dominantType} (${filtered.length} results)`);
       }
     }
     allResults = filtered;
+  } else {
+    console.log(`[filter] No exact match, skipping phrase filter`);
   }
 
   let unique = [];
@@ -397,16 +411,20 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
     hasMore: end < unique.length
   };
 
-  let ttlSeconds;
-  if (unique.length === 0) {
-    ttlSeconds = 3600;
-  } else if (unique.length < 3) {
-    ttlSeconds = 7200;
+  if (!force) {
+    let ttlSeconds;
+    if (unique.length === 0) {
+      ttlSeconds = 3600;
+    } else if (unique.length < 3) {
+      ttlSeconds = 7200;
+    } else {
+      ttlSeconds = 21600;
+    }
+    await setCache(cacheKey, responseData, ttlSeconds);
   } else {
-    ttlSeconds = 21600;
+    console.log(`[force] Not caching result for "${normalizedQ}"`);
   }
 
-  await setCache(cacheKey, responseData, ttlSeconds);
   res.json(responseData);
 }));
 
