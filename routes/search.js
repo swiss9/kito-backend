@@ -6,7 +6,7 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, MediaType } = require('../config');
 const { fetchAniList, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia, mediaToCard } = require('../services/metadataService');
-const { stripSeasonInfo } = require('../utils');
+const { stripSeasonInfo, normalizeTitle, escapeRegex } = require('../utils');
 
 const queryCorrections = {
   'yourname': 'your name',
@@ -146,7 +146,7 @@ function groupByFranchise(items) {
       id: `franchise:${base}`,
       title: cleanTitle,
       aliases,
-      subtitle: `${seasons.length} seasons${minYear ? ` Â· ${minYear}${maxYear && maxYear !== minYear ? 'â€“' + maxYear : ''}` : ''}`,
+      subtitle: `${seasons.length} seasons${minYear ? ` · ${minYear}${maxYear && maxYear !== minYear ? '–' + maxYear : ''}` : ''}`,
       category: first.category,
       mediaType: 'collection',
       year: minYear,
@@ -296,6 +296,28 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
 
   allResults = allResults.filter(item => item && item.status !== 'NOT_YET_RELEASED');
   allResults = allResults.filter(item => item && !item.isAdult);
+
+  const seenAnilistIds = new Set();
+  allResults = allResults.filter(item => {
+    if (item.provider === 'anilist') {
+      if (seenAnilistIds.has(item.providerId)) return false;
+      seenAnilistIds.add(item.providerId);
+    }
+    return true;
+  });
+
+  const normalizedQueryTitle = normalizeTitle(normalizedQuery);
+  if (allResults.length > 0) {
+    const topTitles = [allResults[0].title, ...(allResults[0].aliases || [])].map(t => normalizeTitle(t));
+    const exactMatch = topTitles.some(t => t === normalizedQueryTitle);
+    if (exactMatch) {
+      const phraseRegex = new RegExp(`\\b${escapeRegex(normalizedQueryTitle)}\\b`, 'i');
+      allResults = allResults.filter(item => {
+        const titles = [item.title, ...(item.aliases || [])].map(t => normalizeTitle(t));
+        return titles.some(t => phraseRegex.test(t));
+      });
+    }
+  }
 
   let unique = [];
   if (group) {
