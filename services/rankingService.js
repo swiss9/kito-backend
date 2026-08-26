@@ -2,6 +2,27 @@ const { normalizeTitle, extractReleaseTitle, escapeRegex, wordBoundaryMatch, get
 const { CoverageType, MediaType, SEQUEL_KEYWORDS, TRUSTED_GROUPS } = require('../config');
 
 const FORMAT_KEYWORDS = new Set(['movie', 'film', 'ova', 'special']);
+const STOP_WORDS = new Set(['the', 'movie', 'film', 'ova', 'special', 'part', 'no', 'na', 'wa', 'to']);
+
+function tokenize(title) {
+  return normalizeTitle(title)
+    .split(/\s+/)
+    .filter(word => !STOP_WORDS.has(word) && word.length > 0);
+}
+
+function titleMatches(releaseTitle, mediaTitles) {
+  const releaseTokens = tokenize(releaseTitle);
+  const releaseSet = new Set(releaseTokens);
+
+  for (const mt of mediaTitles) {
+    if (!mt) continue;
+    const mediaTokens = tokenize(mt);
+    if (mediaTokens.length === 0) continue;
+    const allTokensPresent = mediaTokens.every(token => releaseSet.has(token));
+    if (allTokensPresent) return true;
+  }
+  return false;
+}
 
 function parseReleaseName(name) {
   const episode = extractEpisodeNumber(name);
@@ -171,16 +192,6 @@ function getMediaSeason(media) {
     if (match) return parseInt(match[1]);
   }
   return 1;
-}
-
-function titleMatches(releaseTitle, mediaTitles) {
-  for (const mt of mediaTitles) {
-    if (!mt) continue;
-    // Whole phrase match with word boundaries
-    const regex = new RegExp(`\\b${escapeRegex(mt)}\\b`, 'i');
-    if (regex.test(releaseTitle)) return true;
-  }
-  return false;
 }
 
 function validateRelease(parsed, media) {
