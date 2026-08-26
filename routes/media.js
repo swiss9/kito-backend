@@ -7,7 +7,7 @@ const { ApiError } = require('../middleware/errorHandler');
 const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, CoverageType, TRUSTED_GROUPS, MediaType } = require('../config');
 const { fetchAniList, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia } = require('../services/metadataService');
-const { searchReleases } = require('../services/torrentService');
+const { searchReleasesWithFallback } = require('../services/torrentService');
 
 function getCategory(id) { return categoryConfig[id] || null; }
 
@@ -162,7 +162,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
     }
 
     if (mediaObject) {
-      releases = await searchReleases(mediaObject);
+      releases = await searchReleasesWithFallback(mediaObject);
       await setCache(cacheKey, { media: mediaObject, releases }, 43200);
     }
   }
