@@ -307,16 +307,28 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   });
 
   const normalizedQueryTitle = normalizeTitle(normalizedQuery);
-  if (allResults.length > 0) {
-    const topTitles = [allResults[0].title, ...(allResults[0].aliases || [])].map(t => normalizeTitle(t));
-    const exactMatch = topTitles.some(t => t === normalizedQueryTitle);
-    if (exactMatch) {
-      const phraseRegex = new RegExp(`\\b${escapeRegex(normalizedQueryTitle)}\\b`, 'i');
-      allResults = allResults.filter(item => {
-        const titles = [item.title, ...(item.aliases || [])].map(t => normalizeTitle(t));
-        return titles.some(t => phraseRegex.test(t));
-      });
+  const exactMatchItems = allResults.filter(item => {
+    const titles = [item.title, ...(item.aliases || [])].map(t => normalizeTitle(t));
+    return titles.some(t => t === normalizedQueryTitle);
+  });
+
+  if (exactMatchItems.length > 0) {
+    const phraseRegex = new RegExp(`\\b${escapeRegex(normalizedQueryTitle)}\\b`, 'i');
+    let filtered = allResults.filter(item => {
+      const titles = [item.title, ...(item.aliases || [])].map(t => normalizeTitle(t));
+      return titles.some(t => phraseRegex.test(t));
+    });
+
+    if (filtered.length > 10) {
+      const mediaTypes = [...new Set(filtered.map(item => item.mediaType))];
+      if (mediaTypes.length > 1) {
+        const dominantType = mediaTypes
+          .map(type => ({ type, count: filtered.filter(i => i.mediaType === type).length }))
+          .sort((a, b) => b.count - a.count)[0].type;
+        filtered = filtered.filter(item => item.mediaType === dominantType);
+      }
     }
+    allResults = filtered;
   }
 
   let unique = [];
