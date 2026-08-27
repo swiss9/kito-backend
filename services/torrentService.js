@@ -1,6 +1,7 @@
 const xml2js = require('xml2js');
 const { TORRENTCLAW_API_KEY } = require('../config');
-const { setCache, getCached, normalizeTitle, extractMagnetHash, stripSeasonInfo } = require('../utils');
+const { getCache, setCache } = require('../services/cacheService');
+const { normalizeTitle, extractMagnetHash, stripSeasonInfo } = require('../utils');
 const { processRelease, getMediaSeason } = require('./rankingService');
 const { httpGet } = require('./httpClient');
 
@@ -16,7 +17,7 @@ async function searchTorrentClaw(title) {
   if (TORRENTCLAW_API_KEY) params.append('apikey', TORRENTCLAW_API_KEY);
   const url = `${baseUrl}?${params.toString()}`;
   const cacheKey = `torrentclaw:${url}`;
-  const cached = await getCached(cacheKey);
+  const cached = await getCache(cacheKey);
   if (cached) return cached;
 
   const res = await httpGet(url);
@@ -49,7 +50,7 @@ async function searchNyaaRSS(title, category = 'anime') {
   const baseUrl = `https://nyaa.si/?page=rss&c=${catParam}&q=${encodeURIComponent(title)}`;
   const urlWithBust = `${baseUrl}&_=${Date.now()}`;
   const cacheKey = `nyaa:${baseUrl}`;
-  const cached = await getCached(cacheKey);
+  const cached = await getCache(cacheKey);
   if (cached) {
     console.log(`[nyaa] cache HIT for "${title}" (${category}) -> ${cached.length} results`);
     return cached;
@@ -87,7 +88,7 @@ async function searchNyaaRSS(title, category = 'anime') {
 async function searchAnimeGarden(title) {
   const url = `https://api.animes.garden/resources?search=${encodeURIComponent(title)}`;
   const cacheKey = `animegarden:${url}`;
-  const cached = await getCached(cacheKey);
+  const cached = await getCache(cacheKey);
   if (cached) {
     console.log(`[animegarden] cache HIT for "${title}" -> ${cached.length} results`);
     return cached;
@@ -263,7 +264,6 @@ async function searchReleasesWithFallback(media) {
   let fallbackResults = [];
 
   if (categoryId === 'anime') {
-    // Temporarily use AnimeGarden as primary for anime
     try {
       console.log(`[primary] Using AnimeGarden for anime "${media.title}"`);
       const raw = await searchAnimeGarden(media.title);
@@ -286,7 +286,6 @@ async function searchReleasesWithFallback(media) {
       }
     }
   } else if (categoryId === 'tokusatsu') {
-    // Keep Nyaa primary for tokusatsu
     primaryResults = await searchAnimeReleases(media);
     if (!primaryResults.some(r => (r.seeders || 0) >= 5)) {
       try {
