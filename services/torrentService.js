@@ -29,6 +29,7 @@ async function searchTorrentClaw(title) {
     leechers: t.leechers || 0,
     uploader: t.uploader || t.uploaderName || t.username || ''
   }));
+  console.log(`[torrentclaw] query "${title}" -> ${results.length} results`);
   await setCache(cacheKey, results, 3600);
   return results;
 }
@@ -59,6 +60,7 @@ async function searchNyaaRSS(title, category = 'anime') {
   const result = await parser.parseStringPromise(text);
   const items = result.rss?.channel?.item;
   const itemArray = items ? (Array.isArray(items) ? items : [items]) : [];
+  console.log(`[nyaa] query "${title}" (${category}) -> ${itemArray.length} items`);
   const results = itemArray.map(item => {
     const title = item.title || 'Unknown';
     const infoHash = item['nyaa:infoHash'] || '';
@@ -94,6 +96,7 @@ async function searchAnimeGarden(title) {
     leechers: r.leechers || 0,
     uploader: r.publisher || r.uploader || ''
   }));
+  console.log(`[animegarden] query "${title}" -> ${results.length} results`);
   await setCache(cacheKey, results, 1800);
   return results;
 }
@@ -117,9 +120,13 @@ async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap)
     }
   }
 
+  console.log(`[aggregate] raw results for "${media.title}": ${allResults.length}`);
+
   const validated = allResults
     .map(r => processRelease(r, media))
     .filter(r => r !== null);
+
+  console.log(`[aggregate] validated results for "${media.title}": ${validated.length}`);
 
   const hashMap = new Map();
   for (const r of validated) {
@@ -199,6 +206,8 @@ async function searchAnimeReleases(media) {
     }
   }
 
+  console.log(`[search] Query tiers for "${media.title}": ${queryTiers.length} tiers, total queries: ${queryTiers.flat().length}`);
+
   const nyaaSearch = async (title) => {
     if (media.category === 'tokusatsu') {
       const primaryResults = await searchNyaaRSS(title, 'tokusatsu');
@@ -268,7 +277,9 @@ async function searchReleasesWithFallback(media) {
     }
   }
 
-  return mergeReleases(primaryResults, fallbackResults);
+  const merged = mergeReleases(primaryResults, fallbackResults);
+  console.log(`[final] "${media.title}" -> primary: ${primaryResults.length}, fallback: ${fallbackResults.length}, total: ${merged.length}`);
+  return merged;
 }
 
 module.exports = {
