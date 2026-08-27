@@ -5,7 +5,7 @@ const { processRelease, getMediaSeason } = require('./rankingService');
 const { httpGet } = require('./httpClient');
 
 function extractFranchiseTitle(title) {
-  const parts = title.split(/[-:]/);
+  const parts = title.split(/[-:/]/);
   if (parts.length === 0) return stripSeasonInfo(title);
   return stripSeasonInfo(parts[0].trim());
 }
@@ -160,6 +160,12 @@ async function searchAnimeReleases(media) {
     [`${baseTitle} Batch`],
     extraQueries.length ? extraQueries : []
   ].filter(tier => tier.length > 0);
+
+  const franchiseRoot = extractFranchiseTitle(primary);
+  if (franchiseRoot && franchiseRoot !== primary && franchiseRoot !== baseTitle && franchiseRoot.length > 1) {
+    queryTiers.push([franchiseRoot]);
+    queryTiers.push([`${franchiseRoot} Batch`]);
+  }
 
   if (media.category === 'tokusatsu') {
     const batchVariants = [
