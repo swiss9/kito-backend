@@ -255,10 +255,18 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
       if (items.length === 0 && process.env.TMDB_API_KEY) {
         try {
           let tmdbResults = await fetchTmdb('search/tv', { query: normalizedQuery, page: 1 });
-          tmdbResults = tmdbResults.filter(i => i.genre_ids?.includes(16) && i.original_language === 'ja');
+          tmdbResults = tmdbResults.filter(i => 
+            i.genre_ids?.includes(16) && 
+            i.original_language === 'ja' && 
+            i.origin_country?.includes('JP')
+          );
           if (!tmdbResults.length) {
             const movieResults = await fetchTmdb('search/movie', { query: normalizedQuery, page: 1 });
-            tmdbResults = movieResults.filter(i => i.genre_ids?.includes(16) && i.original_language === 'ja');
+            tmdbResults = movieResults.filter(i => 
+              i.genre_ids?.includes(16) && 
+              i.original_language === 'ja' && 
+              i.origin_country?.includes('JP')
+            );
           }
           items = tmdbResults.map(item => mediaToCard(normalizeTmdbMedia(item, catId))).filter(Boolean);
         } catch (err) {
@@ -286,7 +294,8 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
               .filter(item =>
                 item.original_language === 'ja' &&
                 item.genre_ids &&
-                item.genre_ids.some(id => genreIds.includes(id))
+                item.genre_ids.some(id => genreIds.includes(id)) &&
+                item.origin_country?.includes('JP')
               );
             const items = results.map(item => mediaToCard(normalizeTmdbMedia(item, catId))).filter(Boolean);
             tokusatsuItems.push(...items);
