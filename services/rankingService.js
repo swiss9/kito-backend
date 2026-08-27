@@ -225,6 +225,7 @@ function validateRelease(parsed, media) {
 
   const mediaSeason = getMediaSeason(media);
   if (!titleMatches(releaseTitle, mediaTitles, mediaSeason, media.format, media)) {
+    console.log(`[reject] ${parsed.originalName} -> title_mismatch`);
     return { valid: false, reason: 'title_mismatch' };
   }
 
@@ -235,6 +236,7 @@ function validateRelease(parsed, media) {
     if (forbRegex.test(releaseTitle)) {
       const mediaContainsForbidden = mediaTitles.some(mt => forbRegex.test(mt));
       if (!mediaContainsForbidden) {
+        console.log(`[reject] ${parsed.originalName} -> forbidden_relation`);
         return { valid: false, reason: 'forbidden_relation' };
       }
     }
@@ -251,6 +253,7 @@ function validateRelease(parsed, media) {
         /\b(II|III|IV|V|VI|VII|VIII|IX|X)\b/
       ];
       if (seasonPatterns.some(p => p.test(relTitleNorm))) {
+        console.log(`[reject] ${parsed.originalName} -> season_mismatch`);
         return { valid: false, reason: 'season_mismatch' };
       }
     } else {
@@ -262,7 +265,10 @@ function validateRelease(parsed, media) {
       if (!matchesSeason && romanString) {
         matchesSeason = new RegExp(romanString, 'i').test(relTitleNorm);
       }
-      if (!matchesSeason) return { valid: false, reason: 'season_mismatch' };
+      if (!matchesSeason) {
+        console.log(`[reject] ${parsed.originalName} -> season_mismatch`);
+        return { valid: false, reason: 'season_mismatch' };
+      }
     }
   }
 
@@ -278,8 +284,14 @@ function validateRelease(parsed, media) {
   }
 
   if (media.episodeCount && media.episodeCount > 0) {
-    if (episodeStart !== null && episodeStart > media.episodeCount) return { valid: false, reason: 'episode_out_of_range' };
-    if (episodeEnd !== null && episodeEnd > media.episodeCount) return { valid: false, reason: 'episode_out_of_range' };
+    if (episodeStart !== null && episodeStart > media.episodeCount) {
+      console.log(`[reject] ${parsed.originalName} -> episode_out_of_range`);
+      return { valid: false, reason: 'episode_out_of_range' };
+    }
+    if (episodeEnd !== null && episodeEnd > media.episodeCount) {
+      console.log(`[reject] ${parsed.originalName} -> episode_out_of_range`);
+      return { valid: false, reason: 'episode_out_of_range' };
+    }
   }
 
   return { valid: true, episodeStart, episodeEnd };
