@@ -31,17 +31,18 @@ function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat
 
   for (const mt of mediaTitles) {
     if (!mt) continue;
+    const normalizedMedia = normalizeTitle(mt);
+    if (releaseTitle.includes(normalizedMedia)) return true;
+  }
+
+  for (const mt of mediaTitles) {
+    if (!mt) continue;
     const mediaTokens = tokenize(mt);
     if (mediaTokens.length === 0) continue;
-
-    if (mediaTokens.length <= 2) {
-      const normalizedMedia = normalizeTitle(mt);
-      if (releaseTitle.includes(normalizedMedia)) return true;
-    } else {
-      const allPresent = mediaTokens.every(token => releaseSet.has(token));
-      if (allPresent) return true;
-    }
+    const allPresent = mediaTokens.every(token => releaseSet.has(token));
+    if (allPresent) return true;
   }
+
   return false;
 }
 
@@ -129,10 +130,10 @@ function extractSeasonNumber(name, { hasEpisode = false } = {}) {
 function extractEpisodeRange(name) {
   const clean = name.replace(/\[.*?\]|\(.*?\)/g, ' ');
   const patterns = [
-    /(\d+)\s*[-â€“~]\s*(\d+)/,
-    /[Ss](\d+)[Ee](\d+)\s*[-â€“~]\s*[Ee]?(\d+)/,
-    /[Ee]p(?:isode)?\s*(\d+)\s*[-â€“~]\s*(\d+)/i,
-    /[Ee](\d+)\s*[-â€“~]\s*[Ee]?(\d+)/
+    /(\d+)\s*[-–~]\s*(\d+)/,
+    /[Ss](\d+)[Ee](\d+)\s*[-–~]\s*[Ee]?(\d+)/,
+    /[Ee]p(?:isode)?\s*(\d+)\s*[-–~]\s*(\d+)/i,
+    /[Ee](\d+)\s*[-–~]\s*[Ee]?(\d+)/
   ];
   for (const pat of patterns) {
     const match = clean.match(pat);
@@ -242,7 +243,16 @@ function validateRelease(parsed, media) {
   const releaseSeason = parsed.season ?? 1;
   if (releaseSeason !== mediaSeason) {
     if (mediaSeason === 1) {
-      return { valid: false, reason: 'season_mismatch' };
+      const relTitleNorm = normalizeTitle(extractReleaseTitle(parsed.originalName)).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const seasonPatterns = [
+        /\b(season\s*0?[2-9]|s0?[2-9])\b/i,
+        /\b(2nd|3rd|4th|5th|6th|7th|8th|9th|10th)\s*season\b/i,
+        /\b(second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s*season\b/i,
+        /\b(II|III|IV|V|VI|VII|VIII|IX|X)\b/
+      ];
+      if (seasonPatterns.some(p => p.test(relTitleNorm))) {
+        return { valid: false, reason: 'season_mismatch' };
+      }
     } else {
       const relTitleNorm = normalizeTitle(extractReleaseTitle(parsed.originalName)).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
       const seasonRegex = new RegExp(`\\b(season\\s*0?${mediaSeason}|s0?${mediaSeason})\\b`, 'i');
