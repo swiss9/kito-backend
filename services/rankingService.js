@@ -130,10 +130,10 @@ function extractSeasonNumber(name, { hasEpisode = false } = {}) {
 function extractEpisodeRange(name) {
   const clean = name.replace(/\[.*?\]|\(.*?\)/g, ' ');
   const patterns = [
-    /(\d+)\s*[-–~]\s*(\d+)/,
-    /[Ss](\d+)[Ee](\d+)\s*[-–~]\s*[Ee]?(\d+)/,
-    /[Ee]p(?:isode)?\s*(\d+)\s*[-–~]\s*(\d+)/i,
-    /[Ee](\d+)\s*[-–~]\s*[Ee]?(\d+)/
+    /(\d+)\s*[-â€“~]\s*(\d+)/,
+    /[Ss](\d+)[Ee](\d+)\s*[-â€“~]\s*[Ee]?(\d+)/,
+    /[Ee]p(?:isode)?\s*(\d+)\s*[-â€“~]\s*(\d+)/i,
+    /[Ee](\d+)\s*[-â€“~]\s*[Ee]?(\d+)/
   ];
   for (const pat of patterns) {
     const match = clean.match(pat);
