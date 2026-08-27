@@ -5,6 +5,9 @@ const { MediaType } = require('../config');
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w300';
 const ANILIST_API = 'https://graphql.anilist.co';
 
+const BLOCKED_ANILIST_IDS = new Set([97962]);
+const BLOCKED_ANILIST_TITLES = new Set(['suntory minami alps no tennen mizu']);
+
 function stripYearFromTitle(title) {
   if (!title) return '';
   return title.replace(/\s*\(\d{4}\)$/, '').trim();
@@ -37,6 +40,7 @@ async function searchAnilistByTitle(title) {
           status
           genres
           isAdult
+          popularity
         }
       }
     }
@@ -73,6 +77,11 @@ async function searchJikan(query) {
 }
 
 function normalizeAniListMedia(item, categoryId, relations = []) {
+  const titleLower = (item.title?.romaji || item.title?.english || '').toLowerCase();
+  if (BLOCKED_ANILIST_IDS.has(item.id) || BLOCKED_ANILIST_TITLES.has(titleLower)) {
+    return null;
+  }
+
   const aliases = [
     item.title?.romaji,
     item.title?.english,
@@ -104,6 +113,7 @@ function normalizeAniListMedia(item, categoryId, relations = []) {
     category: categoryId,
     format: item.format,
     isAdult: item.isAdult || false,
+    popularity: item.popularity || 0,
     relations: relations.map(r => ({
       id: r.node?.id,
       title: r.node?.title?.romaji || r.node?.title?.english || r.node?.title?.native || '',
@@ -155,6 +165,7 @@ function normalizeJikanMedia(item, categoryId) {
     category: categoryId,
     format: type,
     isAdult,
+    popularity: 0,
     relations: []
   };
 }
@@ -187,6 +198,7 @@ function normalizeTmdbMedia(item, categoryId) {
     category: categoryId,
     format: isMovie ? 'MOVIE' : 'TV',
     isAdult: item.adult || false,
+    popularity: item.popularity || 0,
     relations: []
   };
 }
@@ -197,8 +209,8 @@ function mediaToCard(media) {
   }
 
   const subtitle = media.mediaType === MediaType.MOVIE
-    ? `Film · ${media.year || 'Latest'}`
-    : `Series · ${media.year || 'Latest'}`;
+    ? `Film Â· ${media.year || 'Latest'}`
+    : `Series Â· ${media.year || 'Latest'}`;
 
   return {
     id: media.id,
@@ -215,6 +227,7 @@ function mediaToCard(media) {
     status: media.status || 'UNKNOWN',
     format: media.format,
     isAdult: media.isAdult || false,
+    popularity: media.popularity || 0,
     relationsRaw: media.relationsRaw || [],
     hasRelease: false,
     hasBatch: false
