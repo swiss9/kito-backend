@@ -3,6 +3,7 @@ const router = express.Router();
 const Joi = require('joi');
 const { validate } = require('../middleware/validate');
 const { asyncHandler } = require('../middleware/asyncHandler');
+const { ApiError } = require('../middleware/errorHandler');
 const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, MediaType } = require('../config');
 const { fetchAniList, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia, mediaToCard } = require('../services/metadataService');
@@ -146,7 +147,7 @@ function groupByFranchise(items) {
       id: `franchise:${base}`,
       title: cleanTitle,
       aliases,
-      subtitle: `${seasons.length} seasons${minYear ? ` · ${minYear}${maxYear && maxYear !== minYear ? '–' + maxYear : ''}` : ''}`,
+      subtitle: `${seasons.length} seasons${minYear ? ` Â· ${minYear}${maxYear && maxYear !== minYear ? 'â€“' + maxYear : ''}` : ''}`,
       category: first.category,
       mediaType: 'collection',
       year: minYear,
@@ -200,6 +201,13 @@ async function fetchTmdbSearchWithRetry(url, retries = 3) {
 
 router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, res) => {
   const { q, category, page, perPage, group, force } = req.query;
+
+  if (force === true || force === 'true') {
+    const adminToken = req.headers['x-admin-token'];
+    if (!adminToken || adminToken !== process.env.ADMIN_TOKEN) {
+      throw new ApiError(403, 'Invalid admin token', 'FORBIDDEN');
+    }
+  }
 
   const normalizedQuery = normalizeSearchQuery(q);
   const normalizedQ = normalizedQuery.trim().toLowerCase();
@@ -437,6 +445,8 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
       ttlSeconds = 21600;
     }
     await setCache(cacheKey, responseData, ttlSeconds);
+  } else {
+    console.log(`[force] Not caching result for "${normalizedQ}"`);
   }
 
   res.json(responseData);
