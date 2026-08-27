@@ -45,12 +45,13 @@ async function searchNyaaRSS(title, category = 'anime') {
   if (category === 'tokusatsu') {
     catParam = '4_1';
   }
-  const url = `https://nyaa.si/?page=rss&c=${catParam}&q=${encodeURIComponent(title)}`;
-  const cacheKey = `nyaa:${url}`;
+  const baseUrl = `https://nyaa.si/?page=rss&c=${catParam}&q=${encodeURIComponent(title)}`;
+  const urlWithBust = `${baseUrl}&_=${Date.now()}`;
+  const cacheKey = `nyaa:${baseUrl}`;
   const cached = await getCached(cacheKey);
   if (cached) return cached;
 
-  const res = await httpGet(url, {
+  const res = await httpGet(urlWithBust, {
     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
   });
   const text = await res.text();
@@ -153,19 +154,19 @@ async function searchAnimeReleases(media) {
     extraQueries.push(`${plainBase} Batch`);
   }
 
-  const queryTiers = [
-    [primary],
-    others.length ? others : [],
-    seasonQueries.length ? seasonQueries : [],
-    [`${baseTitle} Batch`],
-    extraQueries.length ? extraQueries : []
-  ].filter(tier => tier.length > 0);
-
   const franchiseRoot = extractFranchiseTitle(primary);
-  if (franchiseRoot && franchiseRoot !== primary && franchiseRoot !== baseTitle && franchiseRoot.length > 1) {
+  const queryTiers = [];
+
+  if (franchiseRoot && franchiseRoot !== primary && franchiseRoot.length > 1) {
     queryTiers.push([franchiseRoot]);
     queryTiers.push([`${franchiseRoot} Batch`]);
   }
+
+  queryTiers.push([primary]);
+  if (others.length) queryTiers.push(others);
+  if (seasonQueries.length) queryTiers.push(seasonQueries);
+  queryTiers.push([`${baseTitle} Batch`]);
+  if (extraQueries.length) queryTiers.push(extraQueries);
 
   if (media.category === 'tokusatsu') {
     const batchVariants = [
@@ -252,8 +253,12 @@ async function searchReleasesWithFallback(media) {
   if (!hasGoodRelease) {
     try {
       if (categoryId === 'anime') {
-        const raw = await searchAnimeGarden(media.title);
+        const raw = await searchTorrentClaw(media.title);
         fallbackResults = raw.map(r => processRelease(r, media)).filter(r => r !== null);
+        if (fallbackResults.length === 0) {
+          const gardenRaw = await searchAnimeGarden(media.title);
+          fallbackResults = gardenRaw.map(r => processRelease(r, media)).filter(r => r !== null);
+        }
       } else if (categoryId === 'tokusatsu') {
         const raw = await searchTorrentClaw(media.title);
         fallbackResults = raw.map(r => processRelease(r, media)).filter(r => r !== null);
