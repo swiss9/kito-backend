@@ -16,7 +16,8 @@ const releasesSchema = Joi.object({
   category: Joi.string().valid('anime', 'tokusatsu').required(),
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(50).default(20),
-  title: Joi.string().allow('').optional()
+  title: Joi.string().allow('').optional(),
+  force: Joi.boolean().default(false)
 });
 
 const recommendationsSchema = Joi.object({
@@ -79,6 +80,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
   const page = req.query.page;
   const limit = req.query.limit;
   let title = req.query.title || '';
+  const force = req.query.force === true;
 
   const config = getCategory(categoryId);
   if (!config) throw new ApiError(400, 'Invalid category', 'INVALID_CATEGORY');
@@ -96,14 +98,18 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
   }
 
   const cacheKey = `releases:${categoryId}:${mediaId}`;
-  const cached = await getCache(cacheKey);
   let mediaObject = null;
   let releases = [];
 
-  if (cached) {
-    mediaObject = cached.media;
-    releases = cached.releases;
-  } else {
+  if (!force) {
+    const cached = await getCache(cacheKey);
+    if (cached) {
+      mediaObject = cached.media;
+      releases = cached.releases;
+    }
+  }
+
+  if (!mediaObject) {
     const provider = mediaId.startsWith('anilist') ? 'anilist' :
                      mediaId.startsWith('jikan') ? 'jikan' : 'tmdb';
     const providerId = mediaId.split(':')[1];
@@ -171,7 +177,9 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
 
     if (mediaObject) {
       releases = await searchReleasesWithFallback(mediaObject);
-      await setCache(cacheKey, { media: mediaObject, releases }, 43200);
+      if (!force) {
+        await setCache(cacheKey, { media: mediaObject, releases }, 43200);
+      }
     }
   }
 
