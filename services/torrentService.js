@@ -5,6 +5,47 @@ const { normalizeTitle, extractMagnetHash, stripSeasonInfo } = require('../utils
 const { processRelease, getMediaSeason } = require('./rankingService');
 const { httpGet } = require('./httpClient');
 
+const STOP_WORDS_QUERY = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'with', 'no', 'na']);
+
+function generateQueryTiers(media) {
+  const titles = [media.title, ...(media.aliases || [])]
+    .map(t => t.replace(/[:/]/g, ' ').replace(/[^\w\s]/g, '').trim())
+    .filter(Boolean);
+
+  const uniqueTitles = [...new Set(titles)];
+  const tiers = [];
+
+  for (const title of uniqueTitles) {
+    const cleaned = title.replace(/\s+/g, ' ').trim();
+    if (cleaned) tiers.push([cleaned]);
+
+    const withoutStop = cleaned.split(' ').filter(w => !STOP_WORDS_QUERY.has(w.toLowerCase())).join(' ');
+    if (withoutStop && withoutStop !== cleaned) tiers.push([withoutStop]);
+
+    const words = cleaned.split(' ');
+    if (words.length > 1) {
+      tiers.push([words[0]]);
+      if (words.length > 2) {
+        tiers.push([words.slice(0, 2).join(' ')]);
+      }
+    }
+
+    const colonParts = media.title.split(':');
+    if (colonParts.length > 1) {
+      const firstPart = colonParts[0].trim();
+      if (firstPart && firstPart !== cleaned) tiers.push([firstPart]);
+    }
+  }
+
+  const franchise = extractFranchiseTitle(media.title);
+  if (franchise && !uniqueTitles.includes(franchise)) {
+    tiers.push([franchise]);
+    tiers.push([`${franchise} Batch`]);
+  }
+
+  return tiers;
+}
+
 function extractFranchiseTitle(title) {
   const parts = title.split(/[-:/]/);
   if (parts.length === 0) return stripSeasonInfo(title);
@@ -149,71 +190,7 @@ async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap)
 }
 
 async function searchAnimeReleases(media) {
-  const allTitles = [media.title, ...(media.aliases || [])].map(t => t.replace(/[:]/g, '').trim());
-  const normalizedTitles = allTitles.map(t => t.normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
-  const combinedTitles = [...new Set([...allTitles, ...normalizedTitles])].filter(Boolean);
-
-  const primary = combinedTitles[0] || media.title.replace(/[:]/g, '').trim();
-  const baseTitle = stripSeasonInfo(primary);
-  const others = combinedTitles.slice(1);
-  const mediaSeason = getMediaSeason(media);
-  const seasonPad = String(mediaSeason).padStart(2, '0');
-  const seasonQueries = mediaSeason > 1
-    ? [`${baseTitle} S${seasonPad}`, `${baseTitle} Season ${mediaSeason}`]
-    : [];
-
-  const plainBase = baseTitle.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const extraQueries = [];
-  if (plainBase !== baseTitle) {
-    extraQueries.push(plainBase);
-    extraQueries.push(`${plainBase} Batch`);
-  }
-
-  const franchiseRoot = extractFranchiseTitle(primary);
-  const queryTiers = [];
-
-  if (franchiseRoot && franchiseRoot !== primary && franchiseRoot.length > 1) {
-    queryTiers.push([franchiseRoot]);
-    queryTiers.push([`${franchiseRoot} Batch`]);
-  }
-
-  queryTiers.push([primary]);
-  if (others.length) queryTiers.push(others);
-  if (seasonQueries.length) queryTiers.push(seasonQueries);
-  queryTiers.push([`${baseTitle} Batch`]);
-  if (extraQueries.length) queryTiers.push(extraQueries);
-
-  if (media.category === 'tokusatsu') {
-    const batchVariants = [
-      `${baseTitle} Complete`,
-      `${baseTitle} Complete Series`,
-      `${baseTitle} Complete Batch`,
-      `${primary} Complete`,
-      `${primary} Complete Series`,
-      `${primary} Complete Batch`
-    ];
-    queryTiers.push(batchVariants);
-  }
-
-  if (media.mediaType === 'movie' || media.format === 'SPECIAL') {
-    const franchiseTitle = extractFranchiseTitle(primary);
-    if (franchiseTitle && franchiseTitle !== primary && franchiseTitle.length > 2) {
-      queryTiers.push([franchiseTitle]);
-      queryTiers.push([`${franchiseTitle} Movie`]);
-      queryTiers.push([`${franchiseTitle} OVA`]);
-      queryTiers.push([`${franchiseTitle} Film`]);
-      queryTiers.push([`${primary} Movie`]);
-      if (media.year) queryTiers.push([`${franchiseTitle} ${media.year}`]);
-      if (media.format === 'SPECIAL') {
-        queryTiers.push([`${franchiseTitle} SD`]);
-        queryTiers.push([`${franchiseTitle} Special`]);
-      }
-      if (primary !== franchiseTitle) {
-        queryTiers.push([primary]);
-      }
-    }
-  }
-
+  const queryTiers = generateQueryTiers(media);
   console.log(`[search] Query tiers for "${media.title}": ${queryTiers.length} tiers, total queries: ${queryTiers.flat().length}`);
 
   const nyaaSearch = async (title) => {
@@ -263,37 +240,25 @@ async function searchReleasesWithFallback(media) {
   let primaryResults = [];
   let fallbackResults = [];
 
-  if (categoryId === 'anime') {
-    try {
-      console.log(`[primary] Using AnimeGarden for anime "${media.title}"`);
-      const raw = await searchAnimeGarden(media.title);
-      primaryResults = raw.map(r => processRelease(r, media)).filter(r => r !== null);
-      console.log(`[primary] AnimeGarden validated: ${primaryResults.length}`);
+  primaryResults = await searchAnimeReleases(media);
 
-      if (!primaryResults.some(r => (r.seeders || 0) >= 5)) {
-        console.log(`[fallback] AnimeGarden low seeders, trying TorrentClaw`);
-        const torrentclawRaw = await searchTorrentClaw(media.title);
-        fallbackResults = torrentclawRaw.map(r => processRelease(r, media)).filter(r => r !== null);
-      }
-    } catch (err) {
-      console.warn(`[primary] AnimeGarden failed: ${err.message}`);
-      try {
-        console.log(`[fallback] Trying Nyaa for anime "${media.title}"`);
-        primaryResults = await searchAnimeReleases(media);
-        fallbackResults = [];
-      } catch (err2) {
-        console.warn(`[fallback] Nyaa also failed: ${err2.message}`);
-      }
-    }
-  } else if (categoryId === 'tokusatsu') {
-    primaryResults = await searchAnimeReleases(media);
-    if (!primaryResults.some(r => (r.seeders || 0) >= 5)) {
-      try {
+  const hasGoodRelease = primaryResults.some(r => (r.seeders || 0) >= 5);
+
+  if (!hasGoodRelease) {
+    try {
+      if (categoryId === 'anime') {
+        const gardenRaw = await searchAnimeGarden(media.title);
+        fallbackResults = gardenRaw.map(r => processRelease(r, media)).filter(r => r !== null);
+        if (fallbackResults.length === 0) {
+          const clawRaw = await searchTorrentClaw(media.title);
+          fallbackResults = clawRaw.map(r => processRelease(r, media)).filter(r => r !== null);
+        }
+      } else if (categoryId === 'tokusatsu') {
         const raw = await searchTorrentClaw(media.title);
         fallbackResults = raw.map(r => processRelease(r, media)).filter(r => r !== null);
-      } catch (err) {
-        console.warn(`[fallback] TorrentClaw failed: ${err.message}`);
       }
+    } catch (err) {
+      console.warn(`Fallback search failed:`, err.message);
     }
   }
 
