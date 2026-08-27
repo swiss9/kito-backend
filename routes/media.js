@@ -80,7 +80,14 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
   const page = req.query.page;
   const limit = req.query.limit;
   let title = req.query.title || '';
-  const force = req.query.force === true;
+  const force = req.query.force === true || req.query.force === 'true';
+
+  if (force) {
+    const adminToken = req.headers['x-admin-token'];
+    if (!adminToken || adminToken !== process.env.ADMIN_TOKEN) {
+      throw new ApiError(403, 'Invalid admin token', 'FORBIDDEN');
+    }
+  }
 
   const config = getCategory(categoryId);
   if (!config) throw new ApiError(400, 'Invalid category', 'INVALID_CATEGORY');
@@ -107,6 +114,8 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
       mediaObject = cached.media;
       releases = cached.releases;
     }
+  } else {
+    console.log(`[force] Bypassing cache for "${mediaId}"`);
   }
 
   if (!mediaObject) {
