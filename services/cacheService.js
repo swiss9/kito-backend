@@ -40,4 +40,36 @@ async function setCache(key, data, ttlSeconds = 3600) {
   cacheTimers.set(key, timer);
 }
 
-module.exports = { getCache, setCache };
+async function deleteCache(key) {
+  if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
+    try {
+      await kv.del(key);
+      return;
+    } catch (err) {
+      console.warn('Vercel KV del failed, falling back to memory:', err.message);
+    }
+  }
+  memoryCache.delete(key);
+  if (cacheTimers.has(key)) {
+    clearTimeout(cacheTimers.get(key));
+    cacheTimers.delete(key);
+  }
+}
+
+async function clearAllCache() {
+  if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
+    try {
+      await kv.flushdb();
+      return;
+    } catch (err) {
+      console.warn('Vercel KV flushdb failed:', err.message);
+    }
+  }
+  for (const timer of cacheTimers.values()) {
+    clearTimeout(timer);
+  }
+  memoryCache.clear();
+  cacheTimers.clear();
+}
+
+module.exports = { getCache, setCache, deleteCache, clearAllCache };
