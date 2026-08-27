@@ -50,7 +50,10 @@ async function searchNyaaRSS(title, category = 'anime') {
   const urlWithBust = `${baseUrl}&_=${Date.now()}`;
   const cacheKey = `nyaa:${baseUrl}`;
   const cached = await getCached(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    console.log(`[nyaa] cache HIT for "${title}" (${category}) -> ${cached.length} results`);
+    return cached;
+  }
 
   const res = await httpGet(urlWithBust, {
     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
@@ -61,6 +64,7 @@ async function searchNyaaRSS(title, category = 'anime') {
   const items = result.rss?.channel?.item;
   const itemArray = items ? (Array.isArray(items) ? items : [items]) : [];
   console.log(`[nyaa] query "${title}" (${category}) -> ${itemArray.length} items`);
+
   const results = itemArray.map(item => {
     const title = item.title || 'Unknown';
     const infoHash = item['nyaa:infoHash'] || '';
@@ -84,7 +88,10 @@ async function searchAnimeGarden(title) {
   const url = `https://api.animes.garden/resources?search=${encodeURIComponent(title)}`;
   const cacheKey = `animegarden:${url}`;
   const cached = await getCached(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    console.log(`[animegarden] cache HIT for "${title}" -> ${cached.length} results`);
+    return cached;
+  }
 
   const res = await httpGet(url);
   const data = await res.json();
@@ -255,25 +262,39 @@ async function searchReleasesWithFallback(media) {
   let primaryResults = [];
   let fallbackResults = [];
 
-  primaryResults = await searchAnimeReleases(media);
-
-  const hasGoodRelease = primaryResults.some(r => (r.seeders || 0) >= 5);
-
-  if (!hasGoodRelease) {
+  if (categoryId === 'anime') {
+    // Temporarily use AnimeGarden as primary for anime
     try {
-      if (categoryId === 'anime') {
-        const raw = await searchTorrentClaw(media.title);
-        fallbackResults = raw.map(r => processRelease(r, media)).filter(r => r !== null);
-        if (fallbackResults.length === 0) {
-          const gardenRaw = await searchAnimeGarden(media.title);
-          fallbackResults = gardenRaw.map(r => processRelease(r, media)).filter(r => r !== null);
-        }
-      } else if (categoryId === 'tokusatsu') {
-        const raw = await searchTorrentClaw(media.title);
-        fallbackResults = raw.map(r => processRelease(r, media)).filter(r => r !== null);
+      console.log(`[primary] Using AnimeGarden for anime "${media.title}"`);
+      const raw = await searchAnimeGarden(media.title);
+      primaryResults = raw.map(r => processRelease(r, media)).filter(r => r !== null);
+      console.log(`[primary] AnimeGarden validated: ${primaryResults.length}`);
+
+      if (!primaryResults.some(r => (r.seeders || 0) >= 5)) {
+        console.log(`[fallback] AnimeGarden low seeders, trying TorrentClaw`);
+        const torrentclawRaw = await searchTorrentClaw(media.title);
+        fallbackResults = torrentclawRaw.map(r => processRelease(r, media)).filter(r => r !== null);
       }
     } catch (err) {
-      console.warn(`Fallback search failed:`, err.message);
+      console.warn(`[primary] AnimeGarden failed: ${err.message}`);
+      try {
+        console.log(`[fallback] Trying Nyaa for anime "${media.title}"`);
+        primaryResults = await searchAnimeReleases(media);
+        fallbackResults = [];
+      } catch (err2) {
+        console.warn(`[fallback] Nyaa also failed: ${err2.message}`);
+      }
+    }
+  } else if (categoryId === 'tokusatsu') {
+    // Keep Nyaa primary for tokusatsu
+    primaryResults = await searchAnimeReleases(media);
+    if (!primaryResults.some(r => (r.seeders || 0) >= 5)) {
+      try {
+        const raw = await searchTorrentClaw(media.title);
+        fallbackResults = raw.map(r => processRelease(r, media)).filter(r => r !== null);
+      } catch (err) {
+        console.warn(`[fallback] TorrentClaw failed: ${err.message}`);
+      }
     }
   }
 
