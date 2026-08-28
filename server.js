@@ -34,21 +34,6 @@ app.get('/', (req, res) => {
   res.json({ status: 'ok', message: 'KITO API running on Vercel.' });
 });
 
-const searchRoutes = require('./routes/search');
-const mediaRoutes = require('./routes/media');
-app.use('/api', searchRoutes);
-app.use('/api', mediaRoutes);
-
-app.get('/api/health', async (req, res) => {
-  const checks = {
-    tmdb: await checkTmdb(),
-    anilist: await checkAnilist(),
-    torrentclaw: await checkTorrentclaw()
-  };
-  const healthy = Object.values(checks).every(c => c === 'ok');
-  res.status(healthy ? 200 : 503).json({ status: healthy ? 'ok' : 'degraded', checks });
-});
-
 app.delete('/api/admin/cache', async (req, res) => {
   const adminToken = process.env.ADMIN_TOKEN;
   if (!adminToken || req.headers['x-admin-token'] !== adminToken) {
@@ -68,6 +53,21 @@ app.delete('/api/admin/cache', async (req, res) => {
     console.error('Cache clear failed:', err);
     res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Cache clear failed' } });
   }
+});
+
+const searchRoutes = require('./routes/search');
+const mediaRoutes = require('./routes/media');
+app.use('/api', searchRoutes);
+app.use('/api', mediaRoutes);
+
+app.get('/api/health', async (req, res) => {
+  const checks = {
+    tmdb: await checkTmdb(),
+    anilist: await checkAnilist(),
+    torrentclaw: await checkTorrentclaw()
+  };
+  const healthy = Object.values(checks).every(c => c === 'ok');
+  res.status(healthy ? 200 : 503).json({ status: healthy ? 'ok' : 'degraded', checks });
 });
 
 app.use((req, res) => {
