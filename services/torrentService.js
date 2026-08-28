@@ -43,6 +43,27 @@ function generateQueryTiers(media) {
     tiers.push([`${franchise} Batch`]);
   }
 
+  if (media.category === 'tokusatsu') {
+    const batchVariants = [
+      `${media.title} Complete`,
+      `${media.title} Complete Series`,
+      `${media.title} Complete Batch`
+    ];
+    if (media.title !== franchise) {
+      batchVariants.push(`${franchise} Complete`);
+      batchVariants.push(`${franchise} Complete Series`);
+      batchVariants.push(`${franchise} Complete Batch`);
+    }
+    tiers.push(batchVariants);
+  }
+
+  console.log(`[generateQueryTiers] Media: "${media.title}" (${media.category})`);
+  console.log(`[generateQueryTiers] Tiers:`);
+  tiers.forEach((tier, idx) => {
+    console.log(`  Tier ${idx + 1}: ${JSON.stringify(tier)}`);
+  });
+  console.log(`[generateQueryTiers] Flattened unique queries: ${JSON.stringify([...new Set(tiers.flat())])}`);
+
   return tiers;
 }
 
@@ -158,6 +179,8 @@ async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap)
     if (!searchFn) continue;
 
     const queries = [...new Set(queryTiers.flat().filter(Boolean))];
+    console.log(`[searchWithAggregation] Source "${src}" will run ${queries.length} unique queries:`);
+    queries.forEach((q, i) => console.log(`  ${i + 1}. "${q}"`));
 
     const srcResults = await Promise.allSettled(
       queries.map(q => searchFn(q).catch(err => { console.warn(`Source ${src} query "${q}" failed:`, err.message); return []; }))
@@ -191,7 +214,6 @@ async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap)
 
 async function searchAnimeReleases(media) {
   const queryTiers = generateQueryTiers(media);
-  console.log(`[search] Query tiers for "${media.title}": ${queryTiers.length} tiers, total queries: ${queryTiers.flat().length}`);
 
   const nyaaSearch = async (title) => {
     if (media.category === 'tokusatsu') {
