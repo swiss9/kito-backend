@@ -251,7 +251,7 @@ function validateRelease(parsed, media) {
   const releaseSeason = parsed.season ?? 1;
   if (releaseSeason !== mediaSeason) {
     if (mediaSeason === 1) {
-      const relTitleNorm = normalizeTitle(extractReleaseTitle(parsed.originalName)).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const relTitleNorm = normalizeTitle(parsed.originalName).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
       const seasonPatterns = [
         /\b(season\s*0?[2-9]|s0?[2-9])\b/i,
         /\b(2nd|3rd|4th|5th|6th|7th|8th|9th|10th)\s*season\b/i,
@@ -263,7 +263,7 @@ function validateRelease(parsed, media) {
         return { valid: false, reason: 'season_mismatch' };
       }
     } else {
-      const relTitleNorm = normalizeTitle(extractReleaseTitle(parsed.originalName)).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const relTitleNorm = normalizeTitle(parsed.originalName).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
       const seasonRegex = new RegExp(`\\b(season\\s*0?${mediaSeason}|s0?${mediaSeason})\\b`, 'i');
       const romanMap = { 2: 'ii', 3: 'iii', 4: 'iv', 5: 'v' };
       const romanString = romanMap[mediaSeason] ? `\\b${romanMap[mediaSeason]}\\b` : null;
