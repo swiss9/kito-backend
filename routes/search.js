@@ -147,7 +147,7 @@ function groupByFranchise(items) {
       id: `franchise:${base}`,
       title: cleanTitle,
       aliases,
-      subtitle: `${seasons.length} seasons${minYear ? ` Â· ${minYear}${maxYear && maxYear !== minYear ? 'â€“' + maxYear : ''}` : ''}`,
+      subtitle: `${seasons.length} seasons${minYear ? ` · ${minYear}${maxYear && maxYear !== minYear ? '–' + maxYear : ''}` : ''}`,
       category: first.category,
       mediaType: 'collection',
       year: minYear,
@@ -212,7 +212,12 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   const normalizedQuery = normalizeSearchQuery(q);
   const normalizedQ = normalizedQuery.trim().toLowerCase();
 
-  const cacheKey = `search:${category}:${normalizedQ}:page:${page}:perPage:${perPage}:group:${group}`;
+  let cacheKey = `search:${category}:${normalizedQ}:page:${page}:perPage:${perPage}:group:${group}`;
+  if (force) {
+    cacheKey += `:force:${Date.now()}`;
+  } else {
+    cacheKey += ':force:false';
+  }
 
   if (!force) {
     const cached = await getCache(cacheKey);
@@ -288,7 +293,6 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
       try {
         const mediaTypes = ['tv', 'movie'];
         let tokusatsuItems = [];
-        const genreIds = [28, 12, 878, 14];
         for (const type of mediaTypes) {
           const url = new URL(`https://api.themoviedb.org/3/search/${type}`);
           url.searchParams.set('api_key', process.env.TMDB_API_KEY);
@@ -301,8 +305,6 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
             const results = (data.results || [])
               .filter(item =>
                 item.original_language === 'ja' &&
-                item.genre_ids &&
-                item.genre_ids.some(id => genreIds.includes(id)) &&
                 item.origin_country?.includes('JP')
               );
             const items = results.map(item => mediaToCard(normalizeTmdbMedia(item, catId))).filter(Boolean);
@@ -419,6 +421,16 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
     }
   } else {
     unique = allResults;
+  }
+
+  const tokusatsuKeywords = /\b(kamen\s*rider|ultraman|super\s*sentai)\b/i;
+  if (tokusatsuKeywords.test(normalizedQuery)) {
+    unique.sort((a, b) => {
+      const aTokusatsu = a.category === 'tokusatsu' ? 1 : 0;
+      const bTokusatsu = b.category === 'tokusatsu' ? 1 : 0;
+      if (aTokusatsu !== bTokusatsu) return bTokusatsu - aTokusatsu;
+      return 0;
+    });
   }
 
   const start = (page - 1) * perPage;
