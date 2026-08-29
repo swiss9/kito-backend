@@ -297,33 +297,32 @@ function mergeReleases(primary, fallback) {
 
 async function searchReleasesWithFallback(media, force = false) {
   const categoryId = media.category;
-  let primaryResults = [];
-  let fallbackResults = [];
+  let allRawResults = [];
 
-  primaryResults = await searchAnimeReleases(media, force);
+  const nyaaResults = await searchAnimeReleases(media, force);
+  allRawResults = allRawResults.concat(nyaaResults);
 
-  const hasGoodRelease = primaryResults.some(r => (r.seeders || 0) >= 5);
-
-  if (!hasGoodRelease) {
+  if (nyaaResults.length < 3) {
     try {
+      let gardenRaw = [];
+      let clawRaw = [];
       if (categoryId === 'anime') {
-        const gardenRaw = await searchAnimeGarden(media.title);
-        fallbackResults = gardenRaw.map(r => processRelease(r, media)).filter(r => r !== null);
-        if (fallbackResults.length === 0) {
-          const clawRaw = await searchTorrentClaw(media.title);
-          fallbackResults = clawRaw.map(r => processRelease(r, media)).filter(r => r !== null);
-        }
+        gardenRaw = await searchAnimeGarden(media.title);
+        clawRaw = await searchTorrentClaw(media.title);
       } else if (categoryId === 'tokusatsu') {
-        const raw = await searchTorrentClaw(media.title);
-        fallbackResults = raw.map(r => processRelease(r, media)).filter(r => r !== null);
+        gardenRaw = await searchAnimeGarden(media.title);
+        clawRaw = await searchTorrentClaw(media.title);
       }
+      const gardenProcessed = gardenRaw.map(r => processRelease(r, media)).filter(r => r !== null);
+      const clawProcessed = clawRaw.map(r => processRelease(r, media)).filter(r => r !== null);
+      allRawResults = allRawResults.concat(gardenProcessed, clawProcessed);
     } catch (err) {
-      console.warn(`Fallback search failed:`, err.message);
+      console.warn(`Fallback sources failed: ${err.message}`);
     }
   }
 
-  const merged = mergeReleases(primaryResults, fallbackResults);
-  console.log(`[final] "${media.title}" -> primary: ${primaryResults.length}, fallback: ${fallbackResults.length}, total: ${merged.length}`);
+  const merged = mergeReleases(allRawResults, []);
+  console.log(`[final] "${media.title}" -> total unique releases: ${merged.length}`);
   return merged;
 }
 
