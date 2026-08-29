@@ -12,6 +12,12 @@ function tokenize(title) {
     .filter(word => !STOP_WORDS.has(word) && word.length > 0);
 }
 
+function extractFranchiseTitle(title) {
+  const parts = title.split(/[-:/]/);
+  if (parts.length === 0) return normalizeTitle(title);
+  return normalizeTitle(parts[0].trim());
+}
+
 function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat = null, media = null) {
   const releaseLower = releaseTitle.toLowerCase();
 
@@ -24,6 +30,11 @@ function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat
       for (const marker of SEQUEL_MARKERS) {
         if (releaseLower.includes(marker)) return false;
       }
+    }
+
+    const franchise = extractFranchiseTitle(media.title);
+    if (franchise && releaseLower.includes(franchise)) {
+      return true;
     }
 
     if (mediaLower === 'kamen rider' || mediaLower === 'kamen rider (1971)' || media.title === 'Kamen Rider') {
@@ -156,10 +167,10 @@ function extractSeasonNumber(name, { hasEpisode = false } = {}) {
 function extractEpisodeRange(name) {
   const clean = name.replace(/\[.*?\]|\(.*?\)/g, ' ');
   const patterns = [
-    /(\d+)\s*[-–~]\s*(\d+)/,
-    /[Ss](\d+)[Ee](\d+)\s*[-–~]\s*[Ee]?(\d+)/,
-    /[Ee]p(?:isode)?\s*(\d+)\s*[-–~]\s*(\d+)/i,
-    /[Ee](\d+)\s*[-–~]\s*[Ee]?(\d+)/
+    /(\d+)\s*[-â€“~]\s*(\d+)/,
+    /[Ss](\d+)[Ee](\d+)\s*[-â€“~]\s*[Ee]?(\d+)/,
+    /[Ee]p(?:isode)?\s*(\d+)\s*[-â€“~]\s*(\d+)/i,
+    /[Ee](\d+)\s*[-â€“~]\s*[Ee]?(\d+)/
   ];
   for (const pat of patterns) {
     const match = clean.match(pat);
