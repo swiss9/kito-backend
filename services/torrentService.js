@@ -140,6 +140,8 @@ async function searchNyaaRSS(title, category = 'anime', force = false) {
     }
   }
 
+  await new Promise(resolve => setTimeout(resolve, 500));
+
   const urlWithBust = `${baseUrl}&_=${Date.now()}`;
   console.log(`[nyaa] fetching fresh for "${title}" (${category})`);
   const res = await httpGet(urlWithBust, {
