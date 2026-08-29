@@ -74,7 +74,11 @@ function extractEpisodeNumber(name) {
     /[Ee](\d{2,3})(?![0-9])/,
     /(?:^|\s)-?\s*(\d{1,3})\s*(?:$|\s)/,
     /\[(\d+)\]/,
-    /\((\d+)\)/
+    /\((\d+)\)/,
+    /[Ee]P\s*(\d+)/i,
+    /EP\s*(\d+)/i,
+    /Episode\s*(\d+)/i,
+    /E(\d{2,3})(?=[\s\]])/i
   ];
   for (const pat of patterns) {
     const match = clean.match(pat);
@@ -88,33 +92,46 @@ function extractEpisodeNumber(name) {
 
 function extractSeasonNumber(name, { hasEpisode = false } = {}) {
   if (!name) return null;
-  const romanMap = { 'II': 2, 'III': 3, 'IV': 4, 'V': 5, 'VI': 6 };
+  const romanMap = {
+    'II': 2, 'III': 3, 'IV': 4, 'V': 5, 'VI': 6,
+    'VII': 7, 'VIII': 8, 'IX': 9, 'X': 10
+  };
 
-  const originalPatterns = [
+  const seasonLabelPatterns = [
     /\b(\d+)(?:st|nd|rd|th)\s*season\b/i,
     /\bseason\s*(\d+)\b/i,
     /\bs(\d+)\b/i,
     /\bpart\s*(\d+)\b/i,
-    /\b(II|III|IV|V|VI)\b/
+    /\bcour\s*(\d+)\b/i,
+    /\b(second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s*season\b/i,
+    /\b(2nd|3rd|4th|5th|6th|7th|8th|9th|10th)\s*season\b/i,
+    /\b(II|III|IV|V|VI|VII|VIII|IX|X)\b/
   ];
 
-  for (const pat of originalPatterns) {
+  for (const pat of seasonLabelPatterns) {
     const match = name.match(pat);
     if (match) {
-      if (pat === originalPatterns[4]) {
-        return romanMap[match[1].toUpperCase()] || null;
+      const token = match[1] || match[0];
+      if (/^\d+$/.test(token)) {
+        const num = parseInt(token);
+        if (num > 0 && num < 100) return num;
+      } else {
+        const lower = token.toLowerCase();
+        if (lower in romanMap) return romanMap[lower.toUpperCase()];
+        const wordMap = {
+          'second': 2, 'third': 3, 'fourth': 4, 'fifth': 5,
+          'sixth': 6, 'seventh': 7, 'eighth': 8, 'ninth': 9, 'tenth': 10
+        };
+        if (lower in wordMap) return wordMap[lower];
       }
-      const num = parseInt(match[1]);
-      if (num > 0 && num < 100) return num;
     }
   }
 
   const clean = name.replace(/\[.*?\]|\(.*?\)/g, ' ');
   const ordinalMatch = clean.match(/\b(\d+)(?:st|nd|rd|th)\s*season\b/i);
   if (ordinalMatch) return parseInt(ordinalMatch[1]);
-  const romanMatch = clean.match(/\b(II|III|IV|V|VI)\b/);
-  if (romanMatch) return romanMap[romanMatch[1]];
-
+  const romanMatch = clean.match(/\b(II|III|IV|V|VI|VII|VIII|IX|X)\b/);
+  if (romanMatch) return romanMap[romanMatch[1].toUpperCase()];
   const patterns = [
     /[Ss](\d+)[Ee]\d+/,
     /[Ss]eason\s*(\d+)/i,
