@@ -4,6 +4,7 @@ const { CoverageType, MediaType, SEQUEL_KEYWORDS, TRUSTED_GROUPS } = require('..
 const FORMAT_KEYWORDS = new Set(['movie', 'film', 'ova', 'special']);
 const STOP_WORDS = new Set(['the', 'movie', 'film', 'ova', 'special', 'part', 'no', 'na', 'wa', 'to']);
 const SEQUEL_MARKERS = ['shippuden', 'shippuuden', 'boruto', 'next generations', 'gt', 'z'];
+const OTHER_SERIES = ['geats', 'gaim', 'ex-aid', 'exaid', 'drive', 'build', 'ghost', 'kiva', 'w', 'ooo', 'den-o', 'deno', 'hibiki', 'kabuto', 'blade', 'ryuki', 'revice', 'saber', 'zero-one', 'zeroone', 'gotchard', 'gavv', 'decade', 'agito', 'faiz', 'kuuga', 'fourze', 'wizard', 'zi-o', 'zio'];
 
 function tokenize(title) {
   return normalizeTitle(title)
@@ -22,6 +23,14 @@ function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat
     if (isOriginal) {
       for (const marker of SEQUEL_MARKERS) {
         if (releaseLower.includes(marker)) return false;
+      }
+    }
+
+    if (mediaLower === 'kamen rider' || mediaLower === 'kamen rider (1971)' || media.title === 'Kamen Rider') {
+      const hasYear = releaseLower.includes('1971') || releaseLower.includes('(1971)');
+      const hasOtherSeries = OTHER_SERIES.some(series => releaseLower.includes(series));
+      if (hasOtherSeries && !hasYear) {
+        return false;
       }
     }
   }
@@ -385,9 +394,6 @@ function processRelease(rawRelease, media) {
   } else if (episodeStart !== null) {
     coverageType = CoverageType.SINGLE;
     coveragePercent = media.episodeCount ? Math.round((1 / media.episodeCount) * 100) : 0;
-  } else {
-    coverageType = CoverageType.SINGLE;
-    coveragePercent = 0;
   }
 
   const confidence = calculateConfidence(parsed, media);
