@@ -57,6 +57,20 @@ function generateQueryTiers(media) {
     tiers.push(batchVariants);
   }
 
+  const aliasMap = {
+    'zeztz': ['zeztz', 'zeztz ep', 'zeztz episode'],
+    'fourze': ['fourze', 'fourze ep', 'fourze episode'],
+  };
+
+  const lowerTitle = media.title.toLowerCase();
+  for (const [key, aliases] of Object.entries(aliasMap)) {
+    if (lowerTitle.includes(key)) {
+      for (const alias of aliases) {
+        tiers.push([alias]);
+      }
+    }
+  }
+
   console.log(`[generateQueryTiers] Media: "${media.title}" (${media.category})`);
   console.log(`[generateQueryTiers] Tiers:`);
   tiers.forEach((tier, idx) => {
