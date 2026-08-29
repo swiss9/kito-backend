@@ -84,14 +84,15 @@ function generateQueryTiers(media) {
     }
   }
 
+  const reducedTiers = dedupedTiers.slice(0, 8);
+
   console.log(`[generateQueryTiers] Media: "${media.title}" (${media.category})`);
-  console.log(`[generateQueryTiers] Tiers:`);
-  dedupedTiers.forEach((tier, idx) => {
+  console.log(`[generateQueryTiers] Tiers (reduced to ${reducedTiers.length}):`);
+  reducedTiers.forEach((tier, idx) => {
     console.log(`  Tier ${idx + 1}: ${JSON.stringify(tier)}`);
   });
-  console.log(`[generateQueryTiers] Flattened unique queries: ${JSON.stringify([...new Set(dedupedTiers.flat())])}`);
 
-  return dedupedTiers;
+  return reducedTiers;
 }
 
 function extractFranchiseTitle(title) {
@@ -151,7 +152,7 @@ async function searchNyaaRSS(title, category = 'anime', force = false) {
     }
   }
 
-  await new Promise(resolve => setTimeout(resolve, 800));
+  await new Promise(resolve => setTimeout(resolve, 1200));
 
   const urlWithBust = `${baseUrl}&_=${Date.now()}`;
   console.log(`[nyaa] fetching fresh for "${title}" (${category})`);
