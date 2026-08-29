@@ -58,7 +58,7 @@ function generateQueryTiers(media) {
   }
 
   const aliasMap = {
-    'zeztz': ['zeztz', 'Zeztz', 'Kamen Rider Zeztz', 'zeztz ep', 'zeztz episode', 'Zeztz EP49', 'zeztz 49'],
+    'zeztz': ['zeztz', 'Zeztz', 'Kamen Rider Zeztz', 'zeztz ep', 'zeztz episode', 'Zeztz EP49', 'zeztz 49', 'Zeztz 49', 'Kamen Rider Zeztz 49'],
     'fourze': ['fourze', 'Fourze', 'Kamen Rider Fourze', 'fourze ep', 'fourze episode'],
     'ooo': ['ooo', 'ozu', 'OOO', 'Ozu', 'Kamen Rider OOO', 'Kamen Rider Ozu'],
     '555': ['555', 'faiz', 'Faiz', 'Kamen Rider 555', 'Kamen Rider Faiz']
@@ -95,6 +95,7 @@ async function searchTorrentClaw(title) {
   if (TORRENTCLAW_API_KEY) params.append('apikey', TORRENTCLAW_API_KEY);
   const url = `${baseUrl}?${params.toString()}`;
   const cacheKey = `torrentclaw:${url}`;
+
   const cached = await getCache(cacheKey);
   if (cached) return cached;
 
@@ -126,21 +127,21 @@ async function searchNyaaRSS(title, category = 'anime', force = false) {
     catParam = '4_1';
   }
   const baseUrl = `https://nyaa.si/?page=rss&c=${catParam}&q=${encodeURIComponent(title)}`;
-  const urlWithBust = `${baseUrl}&_=${Date.now()}`;
   const cacheKey = `nyaa:${baseUrl}`;
 
-  if (!force) {
+  if (force) {
+    console.log(`[nyaa] force delete cache for "${title}" (${category})`);
+    await deleteCache(cacheKey);
+  } else {
     const cached = await getCache(cacheKey);
     if (cached) {
       console.log(`[nyaa] cache HIT for "${title}" (${category}) -> ${cached.length} results`);
       return cached;
     }
-  } else {
-    console.log(`[nyaa] force bypass cache for "${title}" (${category})`);
-    // Delete any existing cache for this key
-    await deleteCache(cacheKey);
   }
 
+  const urlWithBust = `${baseUrl}&_=${Date.now()}`;
+  console.log(`[nyaa] fetching fresh for "${title}" (${category})`);
   const res = await httpGet(urlWithBust, {
     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
   });
@@ -239,16 +240,17 @@ async function searchAnimeReleases(media, force = false) {
   const queryTiers = generateQueryTiers(media);
 
   const nyaaSearch = async (title, forceSearch = false) => {
+    const forceFlag = forceSearch || force;
     if (media.category === 'tokusatsu') {
-      const primaryResults = await searchNyaaRSS(title, 'tokusatsu', forceSearch || force);
+      const primaryResults = await searchNyaaRSS(title, 'tokusatsu', forceFlag);
       const hasGood = primaryResults.some(r => (r.seeders || 0) >= 5);
       if (!hasGood && primaryResults.length < 3) {
-        const fallbackResults = await searchNyaaRSS(title, 'anime', forceSearch || force);
+        const fallbackResults = await searchNyaaRSS(title, 'anime', forceFlag);
         return [...primaryResults, ...fallbackResults];
       }
       return primaryResults;
     }
-    return searchNyaaRSS(title, 'anime', forceSearch || force);
+    return searchNyaaRSS(title, 'anime', forceFlag);
   };
 
   const sourceList = ['nyaa_rss'];
