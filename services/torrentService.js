@@ -58,8 +58,10 @@ function generateQueryTiers(media) {
   }
 
   const aliasMap = {
-    'zeztz': ['zeztz', 'zeztz ep', 'zeztz episode'],
-    'fourze': ['fourze', 'fourze ep', 'fourze episode'],
+    'zeztz': ['zeztz', 'zeztz ep', 'zeztz episode', 'kamen rider zeztz', 'zeztz 49', 'zeztz 48'],
+    'fourze': ['fourze', 'fourze ep', 'fourze episode', 'kamen rider fourze'],
+    'ooo': ['ooo', 'ozu', 'ooo ep', 'kamen rider ooo', 'kamen rider ozu'],
+    '555': ['555', 'faiz', '555 ep', 'kamen rider 555', 'kamen rider faiz']
   };
 
   const lowerTitle = media.title.toLowerCase();
