@@ -4,7 +4,7 @@ const { CoverageType, MediaType, SEQUEL_KEYWORDS, TRUSTED_GROUPS } = require('..
 const FORMAT_KEYWORDS = new Set(['movie', 'film', 'ova', 'special']);
 const STOP_WORDS = new Set(['the', 'movie', 'film', 'ova', 'special', 'part', 'no', 'na', 'wa', 'to']);
 const SEQUEL_MARKERS = ['shippuden', 'shippuuden', 'boruto', 'next generations', 'gt', 'z'];
-const OTHER_SERIES = ['geats', 'gaim', 'ex-aid', 'exaid', 'drive', 'build', 'ghost', 'kiva', 'w', 'ooo', 'den-o', 'deno', 'hibiki', 'kabuto', 'blade', 'ryuki', 'revice', 'saber', 'zero-one', 'zeroone', 'gotchard', 'gavv', 'decade', 'agito', 'faiz', 'kuuga', 'fourze', 'wizard', 'zi-o', 'zio', 'black', 'rx', 'stronger', 'skyrider', 'super 1', 'black rx'];
+const OTHER_SERIES = ['geats', 'gaim', 'ex-aid', 'exaid', 'drive', 'build', 'ghost', 'kiva', 'w', 'ooo', 'den-o', 'deno', 'hibiki', 'kabuto', 'blade', 'ryuki', 'revice', 'saber', 'zero-one', 'zeroone', 'gotchard', 'gavv', 'decade', 'agito', 'faiz', 'kuuga', 'fourze', 'wizard', 'zi-o', 'zio', 'black', 'rx', 'stronger', 'skyrider', 'super 1', 'black rx', 'outsiders', 'shin', 'girls', 'amazons'];
 
 function tokenize(title) {
   return normalizeTitle(title)
@@ -32,23 +32,63 @@ function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat
       }
     }
 
-    const franchise = extractFranchiseTitle(media.title);
-    if (franchise && releaseLower.includes(franchise)) {
-      if (mediaLower === 'kamen rider' || mediaLower === 'kamen rider (1971)' || media.title === 'Kamen Rider') {
-        const hasYear = releaseLower.includes('1971') || releaseLower.includes('(1971)');
-        const hasOtherSeries = OTHER_SERIES.some(series => releaseLower.includes(series));
-        if (hasOtherSeries && !hasYear) {
-          return false;
-        }
-        if (!hasOtherSeries && !hasYear) {
-          return true;
-        }
-        if (hasYear) {
-          return true;
-        }
+    const normalizedMediaTitle = normalizeTitle(media.title);
+    const mediaWords = normalizedMediaTitle.split(/\s+/);
+
+    if (mediaLower === 'kamen rider' || mediaLower === 'kamen rider (1971)' || media.title === 'Kamen Rider') {
+      const hasYear = releaseLower.includes('1971') || releaseLower.includes('(1971)');
+      const hasOtherSeries = OTHER_SERIES.some(series => releaseLower.includes(series));
+      if (!hasYear) {
         return false;
       }
+      if (hasOtherSeries && hasYear) {
+        return true;
+      }
+      if (hasYear) {
+        return true;
+      }
+      return false;
+    }
+
+    const phraseRegex = new RegExp(`\\b${escapeRegex(normalizedMediaTitle)}\\b`, 'i');
+    if (phraseRegex.test(releaseTitle)) {
       return true;
+    }
+
+    for (const mt of mediaTitles) {
+      if (!mt) continue;
+      const normMt = normalizeTitle(mt);
+      const mtRegex = new RegExp(`\\b${escapeRegex(normMt)}\\b`, 'i');
+      if (mtRegex.test(releaseTitle)) {
+        const hasOtherSeries = OTHER_SERIES.some(series => releaseLower.includes(series));
+        if (!hasOtherSeries || releaseLower.includes(mediaWords[0])) {
+          return true;
+        }
+      }
+    }
+
+    if (mediaWords.length >= 2) {
+      const firstTwo = mediaWords.slice(0, 2).join(' ');
+      const firstTwoRegex = new RegExp(`\\b${escapeRegex(firstTwo)}\\b`, 'i');
+      if (firstTwoRegex.test(releaseTitle)) {
+        const hasOtherSeries = OTHER_SERIES.some(series => releaseLower.includes(series));
+        if (!hasOtherSeries || releaseLower.includes(mediaWords[0])) {
+          return true;
+        }
+      }
+    }
+
+    if (media.category === 'tokusatsu') {
+      const mainName = mediaWords[0];
+      if (mainName && mainName.length > 1) {
+        const nameRegex = new RegExp(`\\b${escapeRegex(mainName)}\\b`, 'i');
+        if (nameRegex.test(releaseTitle)) {
+          const hasOtherSeries = OTHER_SERIES.some(series => releaseLower.includes(series));
+          if (!hasOtherSeries || releaseLower.includes(mainName)) {
+            return true;
+          }
+        }
+      }
     }
   }
 
@@ -67,17 +107,6 @@ function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat
     if (mediaTokens.length === 0) continue;
     const allPresent = mediaTokens.every(token => releaseSet.has(token));
     if (allPresent) return true;
-  }
-
-  if (media && media.category === 'tokusatsu') {
-    const mediaTitleLower = media.title.toLowerCase();
-    const releaseWords = releaseLower.split(/\s+/);
-    const mediaWords = mediaTitleLower.split(/\s+/);
-    for (const word of mediaWords) {
-      if (word.length > 2 && releaseWords.some(rw => rw.includes(word) || word.includes(rw))) {
-        return true;
-      }
-    }
   }
 
   return false;
@@ -184,10 +213,10 @@ function extractSeasonNumber(name, { hasEpisode = false } = {}) {
 function extractEpisodeRange(name) {
   const clean = name.replace(/\[.*?\]|\(.*?\)/g, ' ');
   const patterns = [
-    /(\d+)\s*[-â€“~]\s*(\d+)/,
-    /[Ss](\d+)[Ee](\d+)\s*[-â€“~]\s*[Ee]?(\d+)/,
-    /[Ee]p(?:isode)?\s*(\d+)\s*[-â€“~]\s*(\d+)/i,
-    /[Ee](\d+)\s*[-â€“~]\s*[Ee]?(\d+)/
+    /(\d+)\s*[-–~]\s*(\d+)/,
+    /[Ss](\d+)[Ee](\d+)\s*[-–~]\s*[Ee]?(\d+)/,
+    /[Ee]p(?:isode)?\s*(\d+)\s*[-–~]\s*(\d+)/i,
+    /[Ee](\d+)\s*[-–~]\s*[Ee]?(\d+)/
   ];
   for (const pat of patterns) {
     const match = clean.match(pat);
