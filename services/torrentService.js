@@ -1,6 +1,6 @@
 const xml2js = require('xml2js');
 const { TORRENTCLAW_API_KEY } = require('../config');
-const { getCache, setCache } = require('../services/cacheService');
+const { getCache, setCache, deleteCache } = require('../services/cacheService');
 const { normalizeTitle, extractMagnetHash, stripSeasonInfo } = require('../utils');
 const { processRelease, getMediaSeason } = require('./rankingService');
 const { httpGet } = require('./httpClient');
@@ -58,10 +58,10 @@ function generateQueryTiers(media) {
   }
 
   const aliasMap = {
-    'zeztz': ['zeztz', 'zeztz ep', 'zeztz episode', 'kamen rider zeztz', 'zeztz 49', 'zeztz 48'],
-    'fourze': ['fourze', 'fourze ep', 'fourze episode', 'kamen rider fourze'],
-    'ooo': ['ooo', 'ozu', 'ooo ep', 'kamen rider ooo', 'kamen rider ozu'],
-    '555': ['555', 'faiz', '555 ep', 'kamen rider 555', 'kamen rider faiz']
+    'zeztz': ['zeztz', 'Zeztz', 'Kamen Rider Zeztz', 'zeztz ep', 'zeztz episode', 'Zeztz EP49', 'zeztz 49'],
+    'fourze': ['fourze', 'Fourze', 'Kamen Rider Fourze', 'fourze ep', 'fourze episode'],
+    'ooo': ['ooo', 'ozu', 'OOO', 'Ozu', 'Kamen Rider OOO', 'Kamen Rider Ozu'],
+    '555': ['555', 'faiz', 'Faiz', 'Kamen Rider 555', 'Kamen Rider Faiz']
   };
 
   const lowerTitle = media.title.toLowerCase();
@@ -120,7 +120,7 @@ const ANIME_TRACKERS = [
   'udp://exodus.desync.com:6969/announce'
 ].map(tr => `&tr=${encodeURIComponent(tr)}`).join('');
 
-async function searchNyaaRSS(title, category = 'anime') {
+async function searchNyaaRSS(title, category = 'anime', force = false) {
   let catParam = '1_2';
   if (category === 'tokusatsu') {
     catParam = '4_1';
@@ -128,10 +128,17 @@ async function searchNyaaRSS(title, category = 'anime') {
   const baseUrl = `https://nyaa.si/?page=rss&c=${catParam}&q=${encodeURIComponent(title)}`;
   const urlWithBust = `${baseUrl}&_=${Date.now()}`;
   const cacheKey = `nyaa:${baseUrl}`;
-  const cached = await getCache(cacheKey);
-  if (cached) {
-    console.log(`[nyaa] cache HIT for "${title}" (${category}) -> ${cached.length} results`);
-    return cached;
+
+  if (!force) {
+    const cached = await getCache(cacheKey);
+    if (cached) {
+      console.log(`[nyaa] cache HIT for "${title}" (${category}) -> ${cached.length} results`);
+      return cached;
+    }
+  } else {
+    console.log(`[nyaa] force bypass cache for "${title}" (${category})`);
+    // Delete any existing cache for this key
+    await deleteCache(cacheKey);
   }
 
   const res = await httpGet(urlWithBust, {
@@ -187,7 +194,7 @@ async function searchAnimeGarden(title) {
   return results;
 }
 
-async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap) {
+async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap, force = false) {
   const allResults = [];
 
   for (const src of sourceList) {
@@ -195,11 +202,11 @@ async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap)
     if (!searchFn) continue;
 
     const queries = [...new Set(queryTiers.flat().filter(Boolean))];
-    console.log(`[searchWithAggregation] Source "${src}" will run ${queries.length} unique queries:`);
+    console.log(`[searchWithAggregation] Source "${src}" will run ${queries.length} unique queries (force=${force})`);
     queries.forEach((q, i) => console.log(`  ${i + 1}. "${q}"`));
 
     const srcResults = await Promise.allSettled(
-      queries.map(q => searchFn(q).catch(err => { console.warn(`Source ${src} query "${q}" failed:`, err.message); return []; }))
+      queries.map(q => searchFn(q, force).catch(err => { console.warn(`Source ${src} query "${q}" failed:`, err.message); return []; }))
     );
     for (const result of srcResults) {
       if (result.status === 'fulfilled') {
@@ -228,33 +235,33 @@ async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap)
   return deduped;
 }
 
-async function searchAnimeReleases(media) {
+async function searchAnimeReleases(media, force = false) {
   const queryTiers = generateQueryTiers(media);
 
-  const nyaaSearch = async (title) => {
+  const nyaaSearch = async (title, forceSearch = false) => {
     if (media.category === 'tokusatsu') {
-      const primaryResults = await searchNyaaRSS(title, 'tokusatsu');
+      const primaryResults = await searchNyaaRSS(title, 'tokusatsu', forceSearch || force);
       const hasGood = primaryResults.some(r => (r.seeders || 0) >= 5);
       if (!hasGood && primaryResults.length < 3) {
-        const fallbackResults = await searchNyaaRSS(title, 'anime');
+        const fallbackResults = await searchNyaaRSS(title, 'anime', forceSearch || force);
         return [...primaryResults, ...fallbackResults];
       }
       return primaryResults;
     }
-    return searchNyaaRSS(title, 'anime');
+    return searchNyaaRSS(title, 'anime', forceSearch || force);
   };
 
   const sourceList = ['nyaa_rss'];
   const searchFnMap = { nyaa_rss: nyaaSearch };
-  return searchWithAggregation(media, sourceList, queryTiers, searchFnMap);
+  return searchWithAggregation(media, sourceList, queryTiers, searchFnMap, force);
 }
 
-async function searchReleases(media) {
+async function searchReleases(media, force = false) {
   const { categoryConfig } = require('../config');
   const category = categoryConfig[media.category];
   if (!category) return [];
   if (category.id === 'anime' || category.id === 'tokusatsu') {
-    return searchAnimeReleases(media);
+    return searchAnimeReleases(media, force);
   }
   return [];
 }
@@ -273,12 +280,12 @@ function mergeReleases(primary, fallback) {
   return deduped;
 }
 
-async function searchReleasesWithFallback(media) {
+async function searchReleasesWithFallback(media, force = false) {
   const categoryId = media.category;
   let primaryResults = [];
   let fallbackResults = [];
 
-  primaryResults = await searchAnimeReleases(media);
+  primaryResults = await searchAnimeReleases(media, force);
 
   const hasGoodRelease = primaryResults.some(r => (r.seeders || 0) >= 5);
 
