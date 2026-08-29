@@ -69,6 +69,17 @@ function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat
     if (allPresent) return true;
   }
 
+  if (media && media.category === 'tokusatsu') {
+    const mediaTitleLower = media.title.toLowerCase();
+    const releaseWords = releaseLower.split(/\s+/);
+    const mediaWords = mediaTitleLower.split(/\s+/);
+    for (const word of mediaWords) {
+      if (word.length > 2 && releaseWords.some(rw => rw.includes(word) || word.includes(rw))) {
+        return true;
+      }
+    }
+  }
+
   return false;
 }
 
