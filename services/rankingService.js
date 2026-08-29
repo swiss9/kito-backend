@@ -4,7 +4,7 @@ const { CoverageType, MediaType, SEQUEL_KEYWORDS, TRUSTED_GROUPS } = require('..
 const FORMAT_KEYWORDS = new Set(['movie', 'film', 'ova', 'special']);
 const STOP_WORDS = new Set(['the', 'movie', 'film', 'ova', 'special', 'part', 'no', 'na', 'wa', 'to']);
 const SEQUEL_MARKERS = ['shippuden', 'shippuuden', 'boruto', 'next generations', 'gt', 'z'];
-const OTHER_SERIES = ['geats', 'gaim', 'ex-aid', 'exaid', 'drive', 'build', 'ghost', 'kiva', 'w', 'ooo', 'den-o', 'deno', 'hibiki', 'kabuto', 'blade', 'ryuki', 'revice', 'saber', 'zero-one', 'zeroone', 'gotchard', 'gavv', 'decade', 'agito', 'faiz', 'kuuga', 'fourze', 'wizard', 'zi-o', 'zio', 'black', 'rx', 'stronger', 'skyrider', 'super 1', 'black rx', 'outsiders', 'shin', 'girls', 'amazons'];
+const OTHER_SERIES = ['geats', 'gaim', 'ex-aid', 'exaid', 'drive', 'build', 'ghost', 'kiva', 'w', 'ooo', 'den-o', 'deno', 'hibiki', 'kabuto', 'blade', 'ryuki', 'revice', 'saber', 'zero-one', 'zeroone', 'gotchard', 'gavv', 'decade', 'agito', 'faiz', 'kuuga', 'fourze', 'wizard', 'zi-o', 'zio', 'black', 'rx', 'stronger', 'skyrider', 'super 1', 'black rx', 'outsiders', 'shin', 'girls', 'amazons', 'amazon'];
 
 function tokenize(title) {
   return normalizeTitle(title)
@@ -12,42 +12,34 @@ function tokenize(title) {
     .filter(word => !STOP_WORDS.has(word) && word.length > 0);
 }
 
-function isKamenRiderTitle(normalizedTitle) {
-  return normalizedTitle.startsWith('kamen rider') || normalizedTitle.startsWith('masked rider');
-}
-
-function getKamenRiderMainName(normalizedTitle) {
-  if (normalizedTitle.startsWith('kamen rider')) return 'kamen rider';
-  if (normalizedTitle.startsWith('masked rider')) return 'masked rider';
+function extractKamenRiderSeriesName(media) {
+  const titles = [media.title, ...(media.aliases || [])];
+  for (const t of titles) {
+    const norm = normalizeTitle(t);
+    const lower = norm.toLowerCase();
+    if (lower.startsWith('kamen rider') || lower.startsWith('masked rider')) {
+      let rest = norm.slice(norm.indexOf('rider') + 5).trim();
+      rest = rest.replace(/^[\s:\-–—()]+/, '').replace(/[\s:\-–—()]+$/, '');
+      if (rest.length > 0 && !/^\d{4}$/.test(rest)) {
+        return rest;
+      }
+      if (/^\d{4}$/.test(rest)) {
+        return '1971';
+      }
+    }
+  }
   return null;
 }
 
-function extractKamenRiderSubseriesName(normalizedTitle) {
-  const mainName = getKamenRiderMainName(normalizedTitle);
-  if (!mainName) return null;
-  let rest = normalizedTitle.slice(mainName.length).trim();
-  rest = rest.replace(/^[\s:\-–—]+/, '');
-  rest = rest.replace(/[\s:\-–—]+$/, '');
-  const yearMatch = rest.match(/^\((\d{4})\)$/);
-  if (yearMatch) return null;
-  if (rest.length === 0 || /^\d{4}$/.test(rest)) return null;
-  return rest;
-}
-
-function containsOtherSeries(releaseTitle) {
-  const filtered = OTHER_SERIES.filter(s => s.length >= 2);
-  return filtered.some(series => {
-    const normSeries = normalizeTitle(series);
-    if (!normSeries) return false;
-    const regex = new RegExp(`\\b${escapeRegex(normSeries)}\\b`, 'i');
-    return regex.test(releaseTitle);
-  });
-}
-
-function extractFranchiseTitle(title) {
-  const parts = title.split(/[-:/]/);
-  if (parts.length === 0) return normalizeTitle(title);
-  return normalizeTitle(parts[0].trim());
+function containsOtherKamenRiderSeries(releaseTitle, exclude = '') {
+  const lower = releaseTitle.toLowerCase();
+  const excludeLower = exclude.toLowerCase();
+  for (const series of OTHER_SERIES) {
+    if (series.toLowerCase() === excludeLower) continue;
+    const regex = new RegExp(`\\b${escapeRegex(series)}\\b`, 'i');
+    if (regex.test(lower)) return true;
+  }
+  return false;
 }
 
 function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat = null, media = null) {
@@ -64,85 +56,22 @@ function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat
       }
     }
 
-    const normalizedMediaTitle = normalizeTitle(media.title);
-    const mediaWords = normalizedMediaTitle.split(/\s+/);
-
-    const phraseRegex = new RegExp(`\\b${escapeRegex(normalizedMediaTitle)}\\b`, 'i');
-    if (phraseRegex.test(releaseTitle)) {
-      return true;
-    }
-
-    const allMediaTitles = [media.title, ...(media.aliases || [])];
-    const krTitles = allMediaTitles
-      .map(t => normalizeTitle(t))
-      .filter(t => isKamenRiderTitle(t));
-
-    if (krTitles.length > 0) {
-      const hasSubseries = krTitles.some(t => extractKamenRiderSubseriesName(t) !== null);
-
-      if (hasSubseries) {
-        for (const t of krTitles) {
-          const mainName = getKamenRiderMainName(t);
-          const sub = extractKamenRiderSubseriesName(t);
-          if (mainName && sub) {
-            const mainRegex = new RegExp(`\\b${escapeRegex(mainName)}\\b`, 'i');
-            const subRegex = new RegExp(`\\b${escapeRegex(sub)}\\b`, 'i');
-            if (mainRegex.test(releaseTitle) && subRegex.test(releaseTitle)) {
-              return true;
-            }
+    const seriesName = extractKamenRiderSeriesName(media);
+    if (seriesName) {
+      const seriesRegex = new RegExp(`\\b${escapeRegex(seriesName)}\\b`, 'i');
+      if (seriesName === '1971') {
+        if (releaseLower.includes('1971')) {
+          if (!containsOtherKamenRiderSeries(releaseTitle, '1971')) {
+            return true;
           }
+          return false;
         }
         return false;
       } else {
-        for (const t of krTitles) {
-          const mainName = getKamenRiderMainName(t);
-          if (!mainName) continue;
-          const mainRegex = new RegExp(`\\b${escapeRegex(mainName)}\\b`, 'i');
-          if (mainRegex.test(releaseTitle)) {
-            const hasOther = containsOtherSeries(releaseTitle);
-            const has1971 = releaseTitle.includes('1971');
-            if (has1971 || !hasOther) {
-              return true;
-            }
-          }
+        if (seriesRegex.test(releaseTitle)) {
+          return true;
         }
         return false;
-      }
-    }
-
-    for (const mt of mediaTitles) {
-      if (!mt) continue;
-      const normMt = normalizeTitle(mt);
-      const mtRegex = new RegExp(`\\b${escapeRegex(normMt)}\\b`, 'i');
-      if (mtRegex.test(releaseTitle)) {
-        const hasOtherSeries = containsOtherSeries(releaseTitle);
-        if (!hasOtherSeries || releaseLower.includes(mediaWords[0])) {
-          return true;
-        }
-      }
-    }
-
-    if (mediaWords.length >= 2) {
-      const firstTwo = mediaWords.slice(0, 2).join(' ');
-      const firstTwoRegex = new RegExp(`\\b${escapeRegex(firstTwo)}\\b`, 'i');
-      if (firstTwoRegex.test(releaseTitle)) {
-        const hasOtherSeries = containsOtherSeries(releaseTitle);
-        if (!hasOtherSeries || releaseLower.includes(mediaWords[0])) {
-          return true;
-        }
-      }
-    }
-
-    if (media.category === 'tokusatsu') {
-      const mainName = mediaWords[0];
-      if (mainName && mainName.length > 1) {
-        const nameRegex = new RegExp(`\\b${escapeRegex(mainName)}\\b`, 'i');
-        if (nameRegex.test(releaseTitle)) {
-          const hasOtherSeries = containsOtherSeries(releaseTitle);
-          if (!hasOtherSeries || releaseLower.includes(mainName)) {
-            return true;
-          }
-        }
       }
     }
   }
