@@ -28,11 +28,8 @@ function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat
 
   for (const mt of mediaTitles) {
     if (!mt) continue;
-    const mediaTokens = tokenize(mt);
-    if (mediaTokens.length <= 2) {
-      const normalizedMedia = normalizeTitle(mt);
-      if (releaseTitle.includes(normalizedMedia)) return true;
-    }
+    const normalizedMedia = normalizeTitle(mt);
+    if (releaseTitle.includes(normalizedMedia)) return true;
   }
 
   const releaseTokens = tokenize(releaseTitle);
@@ -41,12 +38,9 @@ function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat
   for (const mt of mediaTitles) {
     if (!mt) continue;
     const mediaTokens = tokenize(mt);
-    if (mediaTokens.length > 2) {
-      const normalizedMedia = normalizeTitle(mt);
-      if (releaseTitle.includes(normalizedMedia)) return true;
-      const allPresent = mediaTokens.every(token => releaseSet.has(token));
-      if (allPresent) return true;
-    }
+    if (mediaTokens.length === 0) continue;
+    const allPresent = mediaTokens.every(token => releaseSet.has(token));
+    if (allPresent) return true;
   }
 
   return false;
@@ -391,6 +385,9 @@ function processRelease(rawRelease, media) {
   } else if (episodeStart !== null) {
     coverageType = CoverageType.SINGLE;
     coveragePercent = media.episodeCount ? Math.round((1 / media.episodeCount) * 100) : 0;
+  } else {
+    coverageType = CoverageType.SINGLE;
+    coveragePercent = 0;
   }
 
   const confidence = calculateConfidence(parsed, media);
