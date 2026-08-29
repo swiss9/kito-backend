@@ -4,7 +4,7 @@ const { CoverageType, MediaType, SEQUEL_KEYWORDS, TRUSTED_GROUPS } = require('..
 const FORMAT_KEYWORDS = new Set(['movie', 'film', 'ova', 'special']);
 const STOP_WORDS = new Set(['the', 'movie', 'film', 'ova', 'special', 'part', 'no', 'na', 'wa', 'to']);
 const SEQUEL_MARKERS = ['shippuden', 'shippuuden', 'boruto', 'next generations', 'gt', 'z'];
-const OTHER_SERIES = ['geats', 'gaim', 'ex-aid', 'exaid', 'drive', 'build', 'ghost', 'kiva', 'w', 'ooo', 'den-o', 'deno', 'hibiki', 'kabuto', 'blade', 'ryuki', 'revice', 'saber', 'zero-one', 'zeroone', 'gotchard', 'gavv', 'decade', 'agito', 'faiz', 'kuuga', 'fourze', 'wizard', 'zi-o', 'zio'];
+const OTHER_SERIES = ['geats', 'gaim', 'ex-aid', 'exaid', 'drive', 'build', 'ghost', 'kiva', 'w', 'ooo', 'den-o', 'deno', 'hibiki', 'kabuto', 'blade', 'ryuki', 'revice', 'saber', 'zero-one', 'zeroone', 'gotchard', 'gavv', 'decade', 'agito', 'faiz', 'kuuga', 'fourze', 'wizard', 'zi-o', 'zio', 'black', 'rx', 'stronger', 'skyrider', 'super 1', 'black rx'];
 
 function tokenize(title) {
   return normalizeTitle(title)
@@ -34,15 +34,21 @@ function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat
 
     const franchise = extractFranchiseTitle(media.title);
     if (franchise && releaseLower.includes(franchise)) {
-      return true;
-    }
-
-    if (mediaLower === 'kamen rider' || mediaLower === 'kamen rider (1971)' || media.title === 'Kamen Rider') {
-      const hasYear = releaseLower.includes('1971') || releaseLower.includes('(1971)');
-      const hasOtherSeries = OTHER_SERIES.some(series => releaseLower.includes(series));
-      if (hasOtherSeries && !hasYear) {
+      if (mediaLower === 'kamen rider' || mediaLower === 'kamen rider (1971)' || media.title === 'Kamen Rider') {
+        const hasYear = releaseLower.includes('1971') || releaseLower.includes('(1971)');
+        const hasOtherSeries = OTHER_SERIES.some(series => releaseLower.includes(series));
+        if (hasOtherSeries && !hasYear) {
+          return false;
+        }
+        if (!hasOtherSeries && !hasYear) {
+          return true;
+        }
+        if (hasYear) {
+          return true;
+        }
         return false;
       }
+      return true;
     }
   }
 
