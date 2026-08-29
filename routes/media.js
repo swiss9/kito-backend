@@ -104,7 +104,13 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
     title = media.title?.romaji || media.title?.english || title;
   }
 
-  const cacheKey = `releases:${categoryId}:${mediaId}`;
+  let cacheKey = `releases:${categoryId}:${mediaId}`;
+  if (force) {
+    cacheKey += `:force:${Date.now()}`;
+  } else {
+    cacheKey += ':force:false';
+  }
+
   let mediaObject = null;
   let releases = [];
 
@@ -185,7 +191,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
     }
 
     if (mediaObject) {
-      releases = await searchReleasesWithFallback(mediaObject);
+      releases = await searchReleasesWithFallback(mediaObject, force);
       if (!force) {
         await setCache(cacheKey, { media: mediaObject, releases }, 43200);
       }
