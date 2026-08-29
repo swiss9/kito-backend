@@ -58,7 +58,6 @@ function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat
 
     const seriesName = extractKamenRiderSeriesName(media);
     if (seriesName) {
-      const seriesRegex = new RegExp(`\\b${escapeRegex(seriesName)}\\b`, 'i');
       if (seriesName === '1971') {
         if (releaseLower.includes('1971')) {
           if (!containsOtherKamenRiderSeries(releaseTitle, '1971')) {
@@ -68,6 +67,7 @@ function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat
         }
         return false;
       } else {
+        const seriesRegex = new RegExp(`\\b${escapeRegex(seriesName)}\\b`, 'i');
         if (seriesRegex.test(releaseTitle)) {
           return true;
         }
