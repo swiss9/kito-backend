@@ -1,3 +1,9 @@
+const fs = require('fs');
+const path = require('path');
+
+const constantsPath = path.join(__dirname, 'constants.json');
+const constants = JSON.parse(fs.readFileSync(constantsPath, 'utf8'));
+
 const TMDB_API_KEY = process.env.TMDB_API_KEY;
 const TORRENTCLAW_API_KEY = process.env.TORRENTCLAW_API_KEY;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
@@ -22,19 +28,9 @@ const MediaType = {
   SERIES: 'series'
 };
 
-const SEQUEL_KEYWORDS = [
-  'shippuden', 'shippuuden', 'boruto', 'next generations',
-  'rock lee', 'movie', 'film', 'ova', 'special', 'spin-off', 'spin off'
-];
-
-const TRUSTED_GROUPS = [
-  'SubsPlease', 'Erai-raws', 'Judas', 'AnimeRG',
-  'HorribleSubs', 'Asenshi', 'Commie', 'FFFpeeps',
-  'GJM', 'Hatsuyuki', 'Kaleido', 'Kamigami', 'Leopard',
-  'Mabuse', 'Mazui', 'Nekomoe', 'Ohys', 'ReinForce',
-  'SallySubs', 'SSA', 'Tatsumi', 'Underwater', 'Vivid',
-  'Yami', 'ZR'
-];
+const SEQUEL_KEYWORDS = constants.SEQUEL_KEYWORDS;
+const TRUSTED_GROUPS = constants.TRUSTED_GROUPS;
+const OTHER_SERIES = constants.OTHER_SERIES;
 
 const categoryConfig = {
   anime: {
@@ -59,5 +55,6 @@ module.exports = {
   MediaType,
   SEQUEL_KEYWORDS,
   TRUSTED_GROUPS,
+  OTHER_SERIES,
   categoryConfig
 };
