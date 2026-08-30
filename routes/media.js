@@ -216,13 +216,11 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
     }
   }
 
-  // fetch mediaObject and releases
   mediaObject = await getMediaObject(mediaId, categoryId, title);
   if (!mediaObject) throw new ApiError(404, 'Media not found', 'MEDIA_NOT_FOUND');
 
   releases = await searchReleasesWithFallback(mediaObject, force);
 
-  // deduplicate single episodes
   const singleEpisodes = releases.filter(r => r.coverageType === CoverageType.SINGLE && r.episodeStart !== null);
   const nonSingles = releases.filter(r => r.coverageType !== CoverageType.SINGLE || r.episodeStart === null);
   const episodeMap = new Map();
@@ -333,7 +331,6 @@ router.post('/releases/batch', validate(batchReleasesSchema, 'body'), asyncHandl
       const mediaObject = await getMediaObject(mediaId, item.category, title);
       if (!mediaObject) continue;
       const releases = await searchReleasesWithFallback(mediaObject, false);
-      // deduplicate singles (same as above)
       const singles = releases.filter(r => r.coverageType === CoverageType.SINGLE && r.episodeStart !== null);
       const nonSingles = releases.filter(r => r.coverageType !== CoverageType.SINGLE || r.episodeStart === null);
       const epMap = new Map();
@@ -391,7 +388,6 @@ router.post('/recommendations', validate(recommendationsSchema, 'body'), asyncHa
         }));
       }
     } catch (_) {
-      // fallback: try to extract array from text
       const match = result.match(/\[[\s\S]*\]/);
       if (match) {
         try {
