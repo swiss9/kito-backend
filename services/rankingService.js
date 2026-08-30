@@ -27,70 +27,81 @@ function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat
     }
 
     const normalizedMediaTitle = normalizeTitle(media.title);
-    const mediaWords = normalizedMediaTitle.split(/\s+/);
+    let seriesName = null;
+    const riderIndex = normalizedMediaTitle.indexOf('rider');
+    if (riderIndex !== -1) {
+      let rest = normalizedMediaTitle.slice(riderIndex + 5).trim();
+      rest = rest.replace(/^[\s:\-–—()]+/, '').replace(/[\s:\-–—()]+$/, '');
+      if (rest.length > 0 && !/^\d{4}$/.test(rest)) {
+        seriesName = rest;
+      } else if (/^\d{4}$/.test(rest)) {
+        seriesName = '1971';
+      }
+    }
+    if (!seriesName) {
+      const parts = normalizedMediaTitle.split(/\s+/);
+      if (parts.length > 2) {
+        const possibleName = parts.slice(2).join(' ');
+        if (possibleName && possibleName.length > 0 && !/^\d{4}$/.test(possibleName)) {
+          seriesName = possibleName;
+        }
+      }
+    }
+    if (!seriesName) {
+      const lastWord = normalizedMediaTitle.split(/\s+/).pop();
+      if (lastWord && lastWord.length > 1 && !/^(kamen|rider|masked|series|tv|anime|movie|film)$/i.test(lastWord)) {
+        seriesName = lastWord;
+      }
+    }
 
     if (mediaLower.includes('kamen rider') || mediaLower.includes('masked rider')) {
-      let seriesName = null;
-      const norm = normalizeTitle(media.title);
-      const riderIndex = norm.indexOf('rider');
-      if (riderIndex !== -1) {
-        let rest = norm.slice(riderIndex + 5).trim();
-        rest = rest.replace(/^[\s:\-–—()]+/, '').replace(/[\s:\-–—()]+$/, '');
-        if (rest.length > 0 && !/^\d{4}$/.test(rest)) {
-          seriesName = rest;
-        } else if (/^\d{4}$/.test(rest)) {
-          seriesName = '1971';
-        }
-      }
-      if (!seriesName) {
-        const parts = normalizedMediaTitle.split(/\s+/);
-        if (parts.length > 2) {
-          const possibleName = parts.slice(2).join(' ');
-          if (possibleName && possibleName.length > 0 && !/^\d{4}$/.test(possibleName)) {
-            seriesName = possibleName;
-          }
-        }
-      }
-      if (!seriesName) {
-        const lastWord = mediaWords[mediaWords.length - 1];
-        if (lastWord && lastWord.length > 1 && !/^(kamen|rider|masked|series|tv|anime|movie|film)$/i.test(lastWord)) {
-          seriesName = lastWord;
-        }
-      }
       console.log(`[titleMatches] Media: "${media.title}", extracted seriesName: "${seriesName}"`);
 
-      if (seriesName) {
-        const seriesRegex = new RegExp(escapeRegex(seriesName), 'i');
-        if (seriesName === '1971') {
-          if (releaseLower.includes('1971')) {
-            let hasOther = false;
-            for (const other of OTHER_SERIES) {
-              if (other.toLowerCase() === '1971') continue;
-              const otherRegex = new RegExp(escapeRegex(other), 'i');
-              if (otherRegex.test(releaseLower)) {
-                hasOther = true;
-                break;
-              }
+      if (seriesName === '1971') {
+        if (releaseLower.includes('1971')) {
+          let hasOther = false;
+          for (const other of OTHER_SERIES) {
+            if (other.toLowerCase() === '1971') continue;
+            const otherRegex = new RegExp(escapeRegex(other), 'i');
+            if (otherRegex.test(releaseLower)) {
+              hasOther = true;
+              break;
             }
-            if (!hasOther) {
-              console.log(`[titleMatches] ACCEPT 1971: ${releaseTitle}`);
-              return true;
-            }
-            console.log(`[titleMatches] REJECT 1971 (contains other series): ${releaseTitle}`);
-            return false;
           }
-          console.log(`[titleMatches] REJECT 1971 (no year): ${releaseTitle}`);
+          if (!hasOther) {
+            console.log(`[titleMatches] ACCEPT 1971: ${releaseTitle}`);
+            return true;
+          }
+          console.log(`[titleMatches] REJECT 1971 (contains other series): ${releaseTitle}`);
           return false;
         }
+        console.log(`[titleMatches] REJECT 1971 (no year): ${releaseTitle}`);
+        return false;
+      }
 
+      // For other Kamen Rider series (ZEZTZ, 555, etc.)
+      if (seriesName) {
+        const seriesRegex = new RegExp(escapeRegex(seriesName), 'i');
         if (seriesRegex.test(releaseTitle)) {
           console.log(`[titleMatches] ACCEPT (series match "${seriesName}"): ${releaseTitle}`);
           return true;
-        } else {
-          console.log(`[titleMatches] REJECT (series mismatch - looking for "${seriesName}"): ${releaseTitle}`);
-          return false;
+        }
+        // Also check if any media title matches
+        for (const mt of mediaTitles) {
+          if (!mt) continue;
+          const normMt = normalizeTitle(mt);
+          if (releaseTitle.includes(normMt)) {
+            console.log(`[titleMatches] ACCEPT (media title match): ${releaseTitle}`);
+            return true;
+          }
         }
       }
+
+      // Ultimate fallback for Kamen Rider: accept only if it contains the series name or year
+      // For 1971, we already handled above.
+      // For other series, if we got here, we reject because we couldn't find the series name.
+      console.log(`[titleMatches] REJECT (series mismatch for "${seriesName}"): ${releaseTitle}`);
+      return false;
     }
   }
 
