@@ -20,6 +20,14 @@ const releasesSchema = Joi.object({
   force: Joi.boolean().default(false)
 });
 
+const batchReleasesSchema = Joi.object({
+  items: Joi.array().items(Joi.object({
+    id: Joi.string().required(),
+    category: Joi.string().valid('anime', 'tokusatsu').required(),
+    title: Joi.string().allow('').optional()
+  })).min(1).max(20).required()
+});
+
 const recommendationsSchema = Joi.object({
   bookmarks: Joi.array().items(Joi.object()).optional()
 });
@@ -74,6 +82,75 @@ function pickBestRelease(releases) {
   return sorted[0];
 }
 
+async function getMediaObject(mediaId, categoryId, title) {
+  const provider = mediaId.startsWith('anilist') ? 'anilist' :
+                   mediaId.startsWith('jikan') ? 'jikan' : 'tmdb';
+  const providerId = mediaId.split(':')[1];
+  let rawMedia = null;
+  let relations = [];
+
+  if (provider === 'anilist') {
+    try {
+      const query = `
+        query($id: Int) {
+          Media(id: $id) {
+            id title { romaji english native } synonyms seasonYear coverImage { medium large } format episodes chapters status genres isAdult
+            relations {
+              edges {
+                relationType
+                node { id title { romaji english native } format }
+              }
+            }
+          }
+        }
+      `;
+      const data = await fetchAniList(query, { id: parseInt(providerId) });
+      rawMedia = data.Media;
+      if (rawMedia?.relations?.edges) {
+        relations = rawMedia.relations.edges.map(e => ({
+          relationType: e.relationType,
+          node: e.node
+        }));
+      }
+      if (rawMedia) return normalizeAniListMedia(rawMedia, categoryId, relations);
+    } catch (err) {
+      console.warn(`AniList detail failed: ${err.message}`);
+      if (title) return await fallbackFetchAnimeByTitle(title, categoryId);
+    }
+  } else if (provider === 'jikan') {
+    try {
+      const url = `https://api.jikan.moe/v4/anime/${providerId}`;
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'KITO/1.0' },
+        signal: AbortSignal.timeout(8000)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return normalizeJikanMedia(data.data, categoryId);
+      }
+    } catch (err) {
+      console.warn(`Jikan detail failed: ${err.message}`);
+      if (title) return await fallbackFetchAnimeByTitle(title, categoryId);
+    }
+  } else if (provider === 'tmdb') {
+    if (!process.env.TMDB_API_KEY) throw new ApiError(503, 'TMDB API key not configured', 'TMDB_KEY_MISSING');
+    try {
+      const config = getCategory(categoryId);
+      const mediaType = config.mediaType === MediaType.MOVIE ? 'movie' : 'tv';
+      const url = `https://api.themoviedb.org/3/${mediaType}/${providerId}?api_key=${process.env.TMDB_API_KEY}&language=en-US`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (res.ok) {
+        const data = await res.json();
+        return normalizeTmdbMedia(data, categoryId);
+      }
+    } catch (err) {
+      console.warn(`TMDB detail failed: ${err.message}`);
+      if (title) return await fallbackFetchAnimeByTitle(title, categoryId);
+    }
+  }
+  return null;
+}
+
 router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (req, res) => {
   let mediaId = req.query.id;
   const categoryId = req.query.category;
@@ -104,124 +181,72 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
     title = media.title?.romaji || media.title?.english || title;
   }
 
-  let cacheKey = `releases:${categoryId}:${mediaId}`;
-  if (force) {
-    cacheKey += `:force:${Date.now()}`;
-  } else {
-    cacheKey += ':force:false';
-  }
-
   let mediaObject = null;
   let releases = [];
 
+  const cacheKey = `releases:${categoryId}:${mediaId}`;
+  const cacheKeyWithForce = force ? `${cacheKey}:force:${Date.now()}` : `${cacheKey}:force:false`;
+
   if (!force) {
-    const cached = await getCache(cacheKey);
+    const cached = await getCache(cacheKeyWithForce);
     if (cached) {
       mediaObject = cached.media;
       releases = cached.releases;
-    }
-  } else {
-    console.log(`[force] Bypassing cache for "${mediaId}"`);
-  }
-
-  if (!mediaObject) {
-    const provider = mediaId.startsWith('anilist') ? 'anilist' :
-                     mediaId.startsWith('jikan') ? 'jikan' : 'tmdb';
-    const providerId = mediaId.split(':')[1];
-    let rawMedia = null;
-    let relations = [];
-
-    if (provider === 'anilist') {
-      try {
-        const query = `
-          query($id: Int) {
-            Media(id: $id) {
-              id title { romaji english native } synonyms seasonYear coverImage { medium large } format episodes chapters status genres isAdult
-              relations {
-                edges {
-                  relationType
-                  node { id title { romaji english native } format }
-                }
-              }
-            }
-          }
-        `;
-        const data = await fetchAniList(query, { id: parseInt(providerId) });
-        rawMedia = data.Media;
-        if (rawMedia?.relations?.edges) {
-          relations = rawMedia.relations.edges.map(e => ({
-            relationType: e.relationType,
-            node: e.node
-          }));
-        }
-        if (rawMedia) mediaObject = normalizeAniListMedia(rawMedia, categoryId, relations);
-      } catch (err) {
-        console.warn(`AniList detail failed: ${err.message}`);
-        if (title) mediaObject = await fallbackFetchAnimeByTitle(title, categoryId);
-      }
-    } else if (provider === 'jikan') {
-      try {
-        const url = `https://api.jikan.moe/v4/anime/${providerId}`;
-        const res = await fetch(url, {
-          headers: { 'User-Agent': 'KITO/1.0' },
-          signal: AbortSignal.timeout(8000)
-        });
-        if (res.ok) {
-          const data = await res.json();
-          mediaObject = normalizeJikanMedia(data.data, categoryId);
-        }
-      } catch (err) {
-        console.warn(`Jikan detail failed: ${err.message}`);
-        if (title) mediaObject = await fallbackFetchAnimeByTitle(title, categoryId);
-      }
-    } else if (provider === 'tmdb') {
-      if (!process.env.TMDB_API_KEY) throw new ApiError(503, 'TMDB API key not configured', 'TMDB_KEY_MISSING');
-      try {
-        const mediaType = config.mediaType === MediaType.MOVIE ? 'movie' : 'tv';
-        const url = `https://api.themoviedb.org/3/${mediaType}/${providerId}?api_key=${process.env.TMDB_API_KEY}&language=en-US`;
-        const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-        if (res.ok) {
-          const data = await res.json();
-          mediaObject = normalizeTmdbMedia(data, categoryId);
-        }
-      } catch (err) {
-        console.warn(`TMDB detail failed: ${err.message}`);
-        if (title) mediaObject = await fallbackFetchAnimeByTitle(title, categoryId);
-      }
-    }
-
-    if (mediaObject) {
-      releases = await searchReleasesWithFallback(mediaObject, force);
-
-      const singleEpisodes = releases.filter(r => r.coverageType === CoverageType.SINGLE && r.episodeStart !== null);
-      const nonSingles = releases.filter(r => r.coverageType !== CoverageType.SINGLE || r.episodeStart === null);
-
-      const episodeMap = new Map();
-      for (const ep of singleEpisodes) {
-        const key = ep.episodeStart;
-        const existing = episodeMap.get(key);
-        if (!existing || ep.seeders > existing.seeders || (ep.seeders === existing.seeders && ep.quality > existing.quality)) {
-          episodeMap.set(key, ep);
-        }
-      }
-      const dedupedSingles = Array.from(episodeMap.values());
-      releases = [...dedupedSingles, ...nonSingles];
-      releases.sort((a, b) => {
-        if (a.coverageType === CoverageType.SINGLE && b.coverageType === CoverageType.SINGLE) {
-          return (a.episodeStart || 0) - (b.episodeStart || 0);
-        }
-        if (a.coverageType === CoverageType.SINGLE) return 1;
-        if (b.coverageType === CoverageType.SINGLE) return -1;
-        return b.score - a.score;
+      return res.json({
+        mediaId,
+        category: categoryId,
+        media: {
+          title: mediaObject.title,
+          aliases: mediaObject.aliases,
+          poster: mediaObject.poster,
+          year: mediaObject.year,
+          mediaType: mediaObject.mediaType,
+          episodeCount: mediaObject.episodeCount,
+          genres: mediaObject.genres,
+          status: mediaObject.status
+        },
+        total: releases.length,
+        page,
+        limit,
+        best: pickBestRelease(releases),
+        torrents: releases.slice((page - 1) * limit, page * limit),
+        hasMore: page * limit < releases.length,
+        lowConfidenceCount: releases.filter(r => r.confidence === 'low').length
       });
-
-      if (!force) {
-        await setCache(cacheKey, { media: mediaObject, releases }, 43200);
-      }
     }
   }
 
+  // fetch mediaObject and releases
+  mediaObject = await getMediaObject(mediaId, categoryId, title);
   if (!mediaObject) throw new ApiError(404, 'Media not found', 'MEDIA_NOT_FOUND');
+
+  releases = await searchReleasesWithFallback(mediaObject, force);
+
+  // deduplicate single episodes
+  const singleEpisodes = releases.filter(r => r.coverageType === CoverageType.SINGLE && r.episodeStart !== null);
+  const nonSingles = releases.filter(r => r.coverageType !== CoverageType.SINGLE || r.episodeStart === null);
+  const episodeMap = new Map();
+  for (const ep of singleEpisodes) {
+    const key = ep.episodeStart;
+    const existing = episodeMap.get(key);
+    if (!existing || ep.seeders > existing.seeders || (ep.seeders === existing.seeders && ep.quality > existing.quality)) {
+      episodeMap.set(key, ep);
+    }
+  }
+  const dedupedSingles = Array.from(episodeMap.values());
+  releases = [...dedupedSingles, ...nonSingles];
+  releases.sort((a, b) => {
+    if (a.coverageType === CoverageType.SINGLE && b.coverageType === CoverageType.SINGLE) {
+      return (a.episodeStart || 0) - (b.episodeStart || 0);
+    }
+    if (a.coverageType === CoverageType.SINGLE) return 1;
+    if (b.coverageType === CoverageType.SINGLE) return -1;
+    return b.score - a.score;
+  });
+
+  if (!force) {
+    await setCache(cacheKeyWithForce, { media: mediaObject, releases }, 43200);
+  }
 
   const high = releases.filter(r => r.confidence === 'high');
   const med = releases.filter(r => r.confidence === 'medium');
@@ -289,8 +314,102 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
   });
 }));
 
+router.post('/releases/batch', validate(batchReleasesSchema, 'body'), asyncHandler(async (req, res) => {
+  const { items } = req.body;
+  const results = [];
+  for (const item of items) {
+    try {
+      const config = getCategory(item.category);
+      if (!config) continue;
+      let mediaId = item.id;
+      let title = item.title || '';
+      if (mediaId.startsWith('franchise:')) {
+        if (!title) continue;
+        const media = await searchAnilistByTitle(title);
+        if (!media) continue;
+        mediaId = `anilist:${media.id}`;
+        title = media.title?.romaji || media.title?.english || title;
+      }
+      const mediaObject = await getMediaObject(mediaId, item.category, title);
+      if (!mediaObject) continue;
+      const releases = await searchReleasesWithFallback(mediaObject, false);
+      // deduplicate singles (same as above)
+      const singles = releases.filter(r => r.coverageType === CoverageType.SINGLE && r.episodeStart !== null);
+      const nonSingles = releases.filter(r => r.coverageType !== CoverageType.SINGLE || r.episodeStart === null);
+      const epMap = new Map();
+      for (const ep of singles) {
+        const key = ep.episodeStart;
+        const existing = epMap.get(key);
+        if (!existing || ep.seeders > existing.seeders || (ep.seeders === existing.seeders && ep.quality > existing.quality)) {
+          epMap.set(key, ep);
+        }
+      }
+      const deduped = Array.from(epMap.values());
+      const sorted = [...deduped, ...nonSingles].sort((a, b) => {
+        if (a.coverageType === CoverageType.SINGLE && b.coverageType === CoverageType.SINGLE) {
+          return (a.episodeStart || 0) - (b.episodeStart || 0);
+        }
+        if (a.coverageType === CoverageType.SINGLE) return 1;
+        if (b.coverageType === CoverageType.SINGLE) return -1;
+        return b.score - a.score;
+      });
+      results.push({
+        id: item.id,
+        title: mediaObject.title,
+        releases: sorted,
+        total: sorted.length
+      });
+    } catch (err) {
+      console.warn(`Batch release failed for ${item.id}:`, err.message);
+      results.push({ id: item.id, error: err.message });
+    }
+  }
+  res.json({ results });
+}));
+
 router.post('/recommendations', validate(recommendationsSchema, 'body'), asyncHandler(async (req, res) => {
-  res.json({ items: [] });
+  const { bookmarks = [] } = req.body;
+  if (!process.env.GROQ_API_KEY) {
+    return res.json({ items: [] });
+  }
+  if (bookmarks.length === 0) {
+    return res.json({ items: [] });
+  }
+
+  const titles = bookmarks.map(b => b.title).filter(Boolean).join(', ');
+  const prompt = `Given these anime/tokusatsu titles: ${titles}. Recommend 6 similar titles. Return only a JSON array of objects with fields: title, subtitle (e.g., "Series · 2022 · 12 eps"), category (anime or tokusatsu), mediaType (series or movie), year, poster (empty string).`;
+
+  try {
+    const result = await callGroq(prompt);
+    let items = [];
+    try {
+      const parsed = JSON.parse(result);
+      if (Array.isArray(parsed)) {
+        items = parsed.slice(0, 6).map(item => ({
+          ...item,
+          id: `rec:${Date.now()}-${Math.random()}`
+        }));
+      }
+    } catch (_) {
+      // fallback: try to extract array from text
+      const match = result.match(/\[[\s\S]*\]/);
+      if (match) {
+        try {
+          const parsed = JSON.parse(match[0]);
+          if (Array.isArray(parsed)) {
+            items = parsed.slice(0, 6).map(item => ({
+              ...item,
+              id: `rec:${Date.now()}-${Math.random()}`
+            }));
+          }
+        } catch (__) {}
+      }
+    }
+    res.json({ items });
+  } catch (err) {
+    console.error('Recommendations error:', err);
+    res.json({ items: [] });
+  }
 }));
 
 router.post('/ai-search', validate(aiSearchSchema, 'body'), asyncHandler(async (req, res) => {
