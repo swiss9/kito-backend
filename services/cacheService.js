@@ -57,6 +57,9 @@ async function deleteCache(key) {
 }
 
 async function clearAllCache() {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('flushdb is disabled in production');
+  }
   if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
     try {
       await kv.flushdb();
