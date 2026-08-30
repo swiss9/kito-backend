@@ -65,23 +65,17 @@ function titleMatchesStrict(releaseTitle, mediaTitles, media) {
   console.log(`[titleMatchesStrict] Media: "${media.title}", seriesName: "${seriesName}"`);
 
   if (mediaTitleNorm.includes('kamen rider') || mediaTitleNorm.includes('masked rider')) {
-    if (seriesName === '1971') {
-      if (releaseNorm.includes('1971')) {
-        let hasOther = false;
-        for (const other of OTHER_SERIES) {
-          if (releaseNorm.includes(other)) {
-            hasOther = true;
-            break;
-          }
-        }
-        if (!hasOther) {
-          console.log(`[titleMatchesStrict] ACCEPT 1971: ${releaseTitle}`);
-          return true;
-        }
-        console.log(`[titleMatchesStrict] REJECT 1971 (contains other series): ${releaseTitle}`);
-        return false;
+    if (seriesName === '1971' || media.title === 'Kamen Rider' || media.title === 'Kamen Rider (1971)') {
+      const isSoftSHOUT = releaseNorm.includes('softshout');
+      const is1971 = releaseNorm.includes('1971');
+      const is4KBD = releaseNorm.includes('4kbd');
+      
+      if (isSoftSHOUT && is1971 && is4KBD) {
+        console.log(`[titleMatchesStrict] ACCEPT 1971 (SoftSHOUT only): ${releaseTitle}`);
+        return true;
       }
-      console.log(`[titleMatchesStrict] REJECT 1971 (no year): ${releaseTitle}`);
+      
+      console.log(`[titleMatchesStrict] REJECT 1971 (not SoftSHOUT): ${releaseTitle}`);
       return false;
     }
 
