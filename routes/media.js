@@ -192,6 +192,29 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
 
     if (mediaObject) {
       releases = await searchReleasesWithFallback(mediaObject, force);
+
+      const singleEpisodes = releases.filter(r => r.coverageType === CoverageType.SINGLE && r.episodeStart !== null);
+      const nonSingles = releases.filter(r => r.coverageType !== CoverageType.SINGLE || r.episodeStart === null);
+
+      const episodeMap = new Map();
+      for (const ep of singleEpisodes) {
+        const key = ep.episodeStart;
+        const existing = episodeMap.get(key);
+        if (!existing || ep.seeders > existing.seeders || (ep.seeders === existing.seeders && ep.quality > existing.quality)) {
+          episodeMap.set(key, ep);
+        }
+      }
+      const dedupedSingles = Array.from(episodeMap.values());
+      releases = [...dedupedSingles, ...nonSingles];
+      releases.sort((a, b) => {
+        if (a.coverageType === CoverageType.SINGLE && b.coverageType === CoverageType.SINGLE) {
+          return (a.episodeStart || 0) - (b.episodeStart || 0);
+        }
+        if (a.coverageType === CoverageType.SINGLE) return 1;
+        if (b.coverageType === CoverageType.SINGLE) return -1;
+        return b.score - a.score;
+      });
+
       if (!force) {
         await setCache(cacheKey, { media: mediaObject, releases }, 43200);
       }
