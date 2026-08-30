@@ -20,40 +20,138 @@ function tokenize(title) {
     .filter(word => !STOP_WORDS.has(word) && word.length > 0);
 }
 
+function normalizeTitleForMatching(title) {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function getCanonicalSeriesName(media) {
-  const norm = normalizeTitle(media.title);
-  if (norm.includes('kamen rider') || norm.includes('masked rider')) {
-    const riderIndex = norm.indexOf('rider');
-    if (riderIndex !== -1) {
-      let rest = norm.slice(riderIndex + 5).trim();
-      rest = rest.replace(/^[\s:\-–—()]+/, '').replace(/[\s:\-–—()]+$/, '');
-      if (rest.length > 0 && !/^\d{4}$/.test(rest)) {
-        return rest;
+  const titles = [media.title, ...(media.aliases || [])];
+  for (const t of titles) {
+    const norm = normalizeTitleForMatching(t);
+    if (norm.includes('kamen rider') || norm.includes('masked rider')) {
+      const riderIndex = norm.indexOf('rider');
+      if (riderIndex !== -1) {
+        let rest = norm.slice(riderIndex + 5).trim();
+        rest = rest.replace(/^[\s:\-–—()]+/, '').replace(/[\s:\-–—()]+$/, '');
+        if (rest.length > 0 && !/^\d{4}$/.test(rest)) {
+          return rest;
+        }
+        if (/^\d{4}$/.test(rest)) {
+          return '1971';
+        }
       }
-      if (/^\d{4}$/.test(rest)) {
-        return '1971';
+      const parts = norm.split(/\s+/);
+      if (parts.length > 2) {
+        const possible = parts.slice(2).join(' ');
+        if (possible && possible.length > 0 && !/^\d{4}$/.test(possible)) {
+          return possible;
+        }
       }
+      return null;
     }
-    const parts = norm.split(/\s+/);
-    if (parts.length > 2) {
-      const possible = parts.slice(2).join(' ');
-      if (possible && possible.length > 0 && !/^\d{4}$/.test(possible)) {
-        return possible;
-      }
-    }
-    return 'unknown';
   }
   return null;
 }
 
-function containsOtherSeries(releaseTitle, excludeSeries) {
-  const lower = releaseTitle.toLowerCase();
-  const exclude = excludeSeries ? excludeSeries.toLowerCase() : '';
-  for (const series of OTHER_SERIES) {
-    if (series.toLowerCase() === exclude) continue;
-    const regex = new RegExp(`\\b${escapeRegex(series)}\\b`, 'i');
-    if (regex.test(lower)) return true;
+function titleMatchesStrict(releaseTitle, mediaTitles, media) {
+  const releaseNorm = normalizeTitleForMatching(releaseTitle);
+  const mediaTitleNorm = normalizeTitleForMatching(media.title);
+  const seriesName = getCanonicalSeriesName(media);
+
+  console.log(`[titleMatchesStrict] Media: "${media.title}", seriesName: "${seriesName}"`);
+
+  if (mediaTitleNorm.includes('kamen rider') || mediaTitleNorm.includes('masked rider')) {
+    if (seriesName === '1971') {
+      if (releaseNorm.includes('1971')) {
+        let hasOther = false;
+        for (const other of OTHER_SERIES) {
+          if (releaseNorm.includes(other)) {
+            hasOther = true;
+            break;
+          }
+        }
+        if (!hasOther) {
+          console.log(`[titleMatchesStrict] ACCEPT 1971: ${releaseTitle}`);
+          return true;
+        }
+        console.log(`[titleMatchesStrict] REJECT 1971 (contains other series): ${releaseTitle}`);
+        return false;
+      }
+      console.log(`[titleMatchesStrict] REJECT 1971 (no year): ${releaseTitle}`);
+      return false;
+    }
+
+    if (seriesName) {
+      if (releaseNorm.includes(seriesName)) {
+        console.log(`[titleMatchesStrict] ACCEPT (series match "${seriesName}"): ${releaseTitle}`);
+        return true;
+      }
+      console.log(`[titleMatchesStrict] REJECT (series mismatch - looking for "${seriesName}"): ${releaseTitle}`);
+      return false;
+    }
+
+    if (releaseNorm.includes('kamen rider') || releaseNorm.includes('masked rider')) {
+      let hasOther = false;
+      for (const other of OTHER_SERIES) {
+        if (releaseNorm.includes(other)) {
+          hasOther = true;
+          break;
+        }
+      }
+      if (!hasOther) {
+        console.log(`[titleMatchesStrict] ACCEPT (fallback): ${releaseTitle}`);
+        return true;
+      }
+      console.log(`[titleMatchesStrict] REJECT (contains other series): ${releaseTitle}`);
+      return false;
+    }
   }
+
+  if (mediaTitleNorm.includes('fate/zero') || mediaTitleNorm.includes('fate zero')) {
+    return releaseNorm.includes('fate') && releaseNorm.includes('zero');
+  }
+
+  if (mediaTitleNorm.includes('re:zero') || mediaTitleNorm.includes('re zero')) {
+    return releaseNorm.includes('re') && releaseNorm.includes('zero');
+  }
+
+  if (mediaTitleNorm.includes('one piece')) {
+    return releaseNorm.includes('one') && releaseNorm.includes('piece');
+  }
+
+  for (const mt of mediaTitles) {
+    if (!mt) continue;
+    const normMt = normalizeTitleForMatching(mt);
+    if (releaseNorm.includes(normMt)) {
+      return true;
+    }
+  }
+
+  const mediaTokens = mediaTitleNorm.split(/\s+/);
+  const releaseTokens = releaseNorm.split(/\s+/);
+
+  let matches = 0;
+  for (const mt of mediaTokens) {
+    if (mt.length < 3) continue;
+    for (const rt of releaseTokens) {
+      if (rt.length < 3) continue;
+      if (rt.includes(mt) || mt.includes(rt)) {
+        matches++;
+        break;
+      }
+    }
+  }
+  const overlap = matches / Math.max(mediaTokens.length, 1);
+  if (overlap >= 0.5) {
+    console.log(`[titleMatchesStrict] ACCEPT (overlap ${overlap.toFixed(2)}): ${releaseTitle}`);
+    return true;
+  }
+
+  console.log(`[titleMatchesStrict] REJECT (no match): ${releaseTitle}`);
   return false;
 }
 
@@ -71,44 +169,7 @@ function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat
       }
     }
 
-    const seriesName = getCanonicalSeriesName(media);
-    const isKamenRider = mediaLower.includes('kamen rider') || mediaLower.includes('masked rider');
-
-    if (isKamenRider) {
-      console.log(`[titleMatches] Media: "${media.title}", seriesName: "${seriesName}"`);
-
-      if (seriesName === '1971') {
-        if (releaseLower.includes('1971')) {
-          if (!containsOtherSeries(releaseTitle, '1971')) {
-            console.log(`[titleMatches] ACCEPT 1971: ${releaseTitle}`);
-            return true;
-          }
-          console.log(`[titleMatches] REJECT 1971 (other series): ${releaseTitle}`);
-          return false;
-        }
-        console.log(`[titleMatches] REJECT 1971 (no year): ${releaseTitle}`);
-        return false;
-      }
-
-      if (seriesName && seriesName !== 'unknown') {
-        const seriesRegex = new RegExp(escapeRegex(seriesName), 'i');
-        if (seriesRegex.test(releaseTitle)) {
-          console.log(`[titleMatches] ACCEPT (series match "${seriesName}"): ${releaseTitle}`);
-          return true;
-        }
-        console.log(`[titleMatches] REJECT (series mismatch - looking for "${seriesName}"): ${releaseTitle}`);
-        return false;
-      }
-
-      if (releaseLower.includes('kamen rider') || releaseLower.includes('masked rider')) {
-        if (!containsOtherSeries(releaseTitle, null)) {
-          console.log(`[titleMatches] ACCEPT (fallback): ${releaseTitle}`);
-          return true;
-        }
-        console.log(`[titleMatches] REJECT (contains other series): ${releaseTitle}`);
-        return false;
-      }
-    }
+    return titleMatchesStrict(releaseTitle, mediaTitles, media);
   }
 
   for (const mt of mediaTitles) {
