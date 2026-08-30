@@ -12,36 +12,6 @@ function tokenize(title) {
     .filter(word => !STOP_WORDS.has(word) && word.length > 0);
 }
 
-function extractKamenRiderSeriesName(media) {
-  const titles = [media.title, ...(media.aliases || [])];
-  for (const t of titles) {
-    const norm = normalizeTitle(t);
-    const lower = norm.toLowerCase();
-    if (lower.startsWith('kamen rider') || lower.startsWith('masked rider')) {
-      let rest = norm.slice(norm.indexOf('rider') + 5).trim();
-      rest = rest.replace(/^[\s:\-–—()]+/, '').replace(/[\s:\-–—()]+$/, '');
-      if (rest.length > 0 && !/^\d{4}$/.test(rest)) {
-        return rest;
-      }
-      if (/^\d{4}$/.test(rest)) {
-        return '1971';
-      }
-    }
-  }
-  return null;
-}
-
-function containsOtherKamenRiderSeries(releaseTitle, exclude = '') {
-  const lower = releaseTitle.toLowerCase();
-  const excludeLower = exclude.toLowerCase();
-  for (const series of OTHER_SERIES) {
-    if (series.toLowerCase() === excludeLower) continue;
-    const regex = new RegExp(`\\b${escapeRegex(series)}\\b`, 'i');
-    if (regex.test(lower)) return true;
-  }
-  return false;
-}
-
 function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat = null, media = null) {
   const releaseLower = releaseTitle.toLowerCase();
 
@@ -56,22 +26,70 @@ function titleMatches(releaseTitle, mediaTitles, mediaSeason = null, mediaFormat
       }
     }
 
-    const seriesName = extractKamenRiderSeriesName(media);
-    if (seriesName) {
-      if (seriesName === '1971') {
-        if (releaseLower.includes('1971')) {
-          if (!containsOtherKamenRiderSeries(releaseTitle, '1971')) {
-            return true;
+    const normalizedMediaTitle = normalizeTitle(media.title);
+    const mediaWords = normalizedMediaTitle.split(/\s+/);
+
+    if (mediaLower.includes('kamen rider') || mediaLower.includes('masked rider')) {
+      let seriesName = null;
+      const norm = normalizeTitle(media.title);
+      const riderIndex = norm.indexOf('rider');
+      if (riderIndex !== -1) {
+        let rest = norm.slice(riderIndex + 5).trim();
+        rest = rest.replace(/^[\s:\-–—()]+/, '').replace(/[\s:\-–—()]+$/, '');
+        if (rest.length > 0 && !/^\d{4}$/.test(rest)) {
+          seriesName = rest;
+        } else if (/^\d{4}$/.test(rest)) {
+          seriesName = '1971';
+        }
+      }
+      if (!seriesName) {
+        const parts = normalizedMediaTitle.split(/\s+/);
+        if (parts.length > 2) {
+          const possibleName = parts.slice(2).join(' ');
+          if (possibleName && possibleName.length > 0 && !/^\d{4}$/.test(possibleName)) {
+            seriesName = possibleName;
           }
+        }
+      }
+      if (!seriesName) {
+        const lastWord = mediaWords[mediaWords.length - 1];
+        if (lastWord && lastWord.length > 1 && !/^(kamen|rider|masked|series|tv|anime|movie|film)$/i.test(lastWord)) {
+          seriesName = lastWord;
+        }
+      }
+      console.log(`[titleMatches] Media: "${media.title}", extracted seriesName: "${seriesName}"`);
+
+      if (seriesName) {
+        const seriesRegex = new RegExp(escapeRegex(seriesName), 'i');
+        if (seriesName === '1971') {
+          if (releaseLower.includes('1971')) {
+            let hasOther = false;
+            for (const other of OTHER_SERIES) {
+              if (other.toLowerCase() === '1971') continue;
+              const otherRegex = new RegExp(escapeRegex(other), 'i');
+              if (otherRegex.test(releaseLower)) {
+                hasOther = true;
+                break;
+              }
+            }
+            if (!hasOther) {
+              console.log(`[titleMatches] ACCEPT 1971: ${releaseTitle}`);
+              return true;
+            }
+            console.log(`[titleMatches] REJECT 1971 (contains other series): ${releaseTitle}`);
+            return false;
+          }
+          console.log(`[titleMatches] REJECT 1971 (no year): ${releaseTitle}`);
           return false;
         }
-        return false;
-      } else {
-        const seriesRegex = new RegExp(`\\b${escapeRegex(seriesName)}\\b`, 'i');
+
         if (seriesRegex.test(releaseTitle)) {
+          console.log(`[titleMatches] ACCEPT (series match "${seriesName}"): ${releaseTitle}`);
           return true;
+        } else {
+          console.log(`[titleMatches] REJECT (series mismatch - looking for "${seriesName}"): ${releaseTitle}`);
+          return false;
         }
-        return false;
       }
     }
   }
