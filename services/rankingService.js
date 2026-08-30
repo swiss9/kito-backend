@@ -1,5 +1,5 @@
 const { normalizeTitle, extractReleaseTitle, escapeRegex, getReleaseGroup } = require('../utils');
-const { CoverageType, MediaType, SEQUEL_KEYWORDS, TRUSTED_GROUPS } = require('../config');
+const { CoverageType, MediaType, SEQUEL_KEYWORDS, TRUSTED_GROUPS, OTHER_SERIES } = require('../config');
 
 const FORMAT_KEYWORDS = new Set(['movie', 'film', 'ova', 'special']);
 const STOP_WORDS = new Set(['the', 'movie', 'film', 'ova', 'special', 'part', 'no', 'na', 'wa', 'to']);
