@@ -7,10 +7,16 @@ const rateLimit = require('express-rate-limit');
 const { errorHandler } = require('./middleware/errorHandler');
 const { checkTmdb, checkAnilist, checkTorrentclaw } = require('./services/healthService');
 const { clearAllCache, deleteCache } = require('./services/cacheService');
+const logger = require('./services/logger');
 
 const app = express();
 
 app.set('trust proxy', 1);
+
+app.use((req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
 
 app.use(helmet());
 app.use(cors({
@@ -50,7 +56,7 @@ app.delete('/api/admin/cache', async (req, res) => {
       res.json({ success: true, cleared: 'all' });
     }
   } catch (err) {
-    console.error('Cache clear failed:', err);
+    logger.error({ err }, 'Cache clear failed');
     res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Cache clear failed' } });
   }
 });
@@ -78,7 +84,7 @@ app.use(errorHandler);
 
 if (require.main === module) {
   const port = process.env.PORT || 3000;
-  app.listen(port, () => console.log(`KITO API running on ${port}`));
+  app.listen(port, () => logger.info({ port }, 'KITO API running'));
 }
 
 module.exports = app;
