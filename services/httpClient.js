@@ -1,3 +1,5 @@
+const logger = require('./logger');
+
 async function httpGet(url, options = {}, { retries = 3, timeout = 8000 } = {}) {
   let lastError;
   let attempt = 1;
@@ -9,7 +11,7 @@ async function httpGet(url, options = {}, { retries = 3, timeout = 8000 } = {}) 
       if (res.status === 429) {
         const retryAfter = parseInt(res.headers.get('Retry-After') || '5');
         const waitMs = Math.min(retryAfter * 1000, 30000);
-        console.warn(`HTTP GET ${url} received 429, waiting ${waitMs}ms (attempt ${attempt}/${retries + 1})`);
+        logger.warn({ url, attempt, waitMs }, 'HTTP GET received 429, waiting');
         await new Promise(r => setTimeout(r, waitMs));
         attempt++;
         continue;
@@ -20,7 +22,7 @@ async function httpGet(url, options = {}, { retries = 3, timeout = 8000 } = {}) 
       return res;
     } catch (err) {
       lastError = err;
-      console.warn(`HTTP GET ${url} failed (attempt ${attempt}/${retries + 1}): ${err.message}`);
+      logger.warn({ url, attempt, err }, 'HTTP GET failed');
       if (attempt <= retries) {
         const delay = Math.min(500 * attempt, 5000);
         await new Promise(r => setTimeout(r, delay));
@@ -50,7 +52,7 @@ async function httpPost(url, body, options = {}, { retries = 2, timeout = 8000 }
       if (res.status === 429) {
         const retryAfter = parseInt(res.headers.get('Retry-After') || '5');
         const waitMs = Math.min(retryAfter * 1000, 30000);
-        console.warn(`HTTP POST ${url} received 429, waiting ${waitMs}ms (attempt ${attempt}/${retries + 1})`);
+        logger.warn({ url, attempt, waitMs }, 'HTTP POST received 429, waiting');
         await new Promise(r => setTimeout(r, waitMs));
         attempt++;
         continue;
@@ -61,7 +63,7 @@ async function httpPost(url, body, options = {}, { retries = 2, timeout = 8000 }
       return res;
     } catch (err) {
       lastError = err;
-      console.warn(`HTTP POST ${url} failed (attempt ${attempt}/${retries + 1}): ${err.message}`);
+      logger.warn({ url, attempt, err }, 'HTTP POST failed');
       if (attempt <= retries) {
         const delay = Math.min(500 * attempt, 5000);
         await new Promise(r => setTimeout(r, delay));
