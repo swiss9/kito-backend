@@ -36,6 +36,7 @@ const SEQUEL_KEYWORDS = constants.SEQUEL_KEYWORDS;
 const TRUSTED_GROUPS = constants.TRUSTED_GROUPS;
 const OTHER_SERIES = constants.OTHER_SERIES;
 const ALIAS_MAP = constants.ALIAS_MAP || {};
+const QUERY_CORRECTIONS = constants.QUERY_CORRECTIONS || {};
 
 const categoryConfig = {
   anime: {
@@ -62,5 +63,6 @@ module.exports = {
   TRUSTED_GROUPS,
   OTHER_SERIES,
   ALIAS_MAP,
+  QUERY_CORRECTIONS,
   categoryConfig
 };
