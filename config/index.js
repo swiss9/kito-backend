@@ -35,7 +35,6 @@ const MediaType = {
 const SEQUEL_KEYWORDS = constants.SEQUEL_KEYWORDS;
 const TRUSTED_GROUPS = constants.TRUSTED_GROUPS;
 const OTHER_SERIES = constants.OTHER_SERIES;
-const KAMEN_RIDER_WORKS = constants.KAMEN_RIDER_WORKS || [];
 const ALIAS_MAP = constants.ALIAS_MAP || {};
 
 const categoryConfig = {
@@ -62,7 +61,6 @@ module.exports = {
   SEQUEL_KEYWORDS,
   TRUSTED_GROUPS,
   OTHER_SERIES,
-  KAMEN_RIDER_WORKS,
   ALIAS_MAP,
   categoryConfig
 };
