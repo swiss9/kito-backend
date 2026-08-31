@@ -18,5 +18,43 @@
     "agito", "faiz", "kuuga", "fourze", "wizard", "zi-o", "zio",
     "black", "rx", "stronger", "skyrider", "super 1", "black rx",
     "outsiders", "shin", "girls", "amazons", "amazon"
-  ]
+  ],
+  "KAMEN_RIDER_WORKS": [
+    "geats", "gaim", "ex-aid", "drive", "build", "ghost", "kiva",
+    "w", "ooo", "den-o", "hibiki", "kabuto", "blade", "ryuki",
+    "revice", "saber", "zero-one", "gotchard", "gavv", "decade",
+    "agito", "faiz", "kuuga", "fourze", "wizard", "zi-o",
+    "black", "rx", "stronger", "skyrider", "super 1"
+  ],
+  "ALIAS_MAP": {
+    "zeztz": ["zeztz", "kamen rider zeztz"],
+    "fourze": ["fourze", "kamen rider fourze"],
+    "ooo": ["ooo", "ozu", "kamen rider ooo"],
+    "555": ["555", "faiz", "kamen rider 555", "kamen rider faiz"],
+    "kuuga": ["kuuga", "kamen rider kuuga"],
+    "agito": ["agito", "kamen rider agito"],
+    "ryuki": ["ryuki", "kamen rider ryuki"],
+    "blade": ["blade", "kamen rider blade"],
+    "hibiki": ["hibiki", "kamen rider hibiki"],
+    "kabuto": ["kabuto", "kamen rider kabuto"],
+    "den-o": ["den-o", "deno", "kamen rider den-o"],
+    "kiva": ["kiva", "kamen rider kiva"],
+    "decade": ["decade", "kamen rider decade"],
+    "w": ["w", "double", "kamen rider w", "kamen rider double"],
+    "ooo": ["ooo", "ozu", "kamen rider ooo", "kamen rider ozu"],
+    "fourze": ["fourze", "kamen rider fourze"],
+    "wizard": ["wizard", "kamen rider wizard"],
+    "gaim": ["gaim", "kamen rider gaim"],
+    "drive": ["drive", "kamen rider drive"],
+    "ghost": ["ghost", "kamen rider ghost"],
+    "ex-aid": ["ex-aid", "exaid", "kamen rider ex-aid"],
+    "build": ["build", "kamen rider build"],
+    "zi-o": ["zi-o", "zio", "kamen rider zi-o"],
+    "zero-one": ["zero-one", "zeroone", "kamen rider zero-one"],
+    "saber": ["saber", "kamen rider saber"],
+    "revice": ["revice", "kamen rider revice"],
+    "geats": ["geats", "kamen rider geats"],
+    "gotchard": ["gotchard", "kamen rider gotchard"],
+    "gavv": ["gavv", "kamen rider gavv"]
+  }
 }
