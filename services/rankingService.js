@@ -1,5 +1,5 @@
 const { normalizeTitle, extractReleaseTitle, escapeRegex, getReleaseGroup } = require('../utils');
-const { CoverageType, MediaType, SEQUEL_KEYWORDS, TRUSTED_GROUPS, OTHER_SERIES } = require('../config');
+const { CoverageType, MediaType, SEQUEL_KEYWORDS, TRUSTED_GROUPS, OTHER_SERIES, ALIAS_MAP, KAMEN_RIDER_WORKS } = require('../config');
 
 const FORMAT_KEYWORDS = new Set(['movie', 'film', 'ova', 'special']);
 const STOP_WORDS = new Set(['the', 'movie', 'film', 'ova', 'special', 'part', 'no', 'na', 'wa', 'to']);
@@ -89,14 +89,7 @@ function getRelatedWorks(media) {
 
 function hasOtherKamenRiderWork(releaseNorm, workName) {
   const workLower = workName ? workName.toLowerCase() : '';
-  const otherWorks = [
-    'geats', 'gaim', 'ex-aid', 'exaid', 'drive', 'build', 'ghost', 'kiva',
-    'w', 'ooo', 'den-o', 'deno', 'hibiki', 'kabuto', 'blade', 'ryuki',
-    'revice', 'saber', 'zero-one', 'zeroone', 'gotchard', 'gavv', 'decade',
-    'agito', 'faiz', 'kuuga', 'fourze', 'wizard', 'zi-o', 'zio',
-    'black', 'rx', 'stronger', 'skyrider', 'super 1', 'black rx'
-  ];
-  for (const other of otherWorks) {
+  for (const other of KAMEN_RIDER_WORKS) {
     if (other === workLower) continue;
     if (releaseNorm.includes(other)) return true;
   }
