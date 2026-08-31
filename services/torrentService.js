@@ -4,10 +4,12 @@ const { getCache, setCache, deleteCache } = require('../services/cacheService');
 const { normalizeTitle, extractMagnetHash, stripSeasonInfo } = require('../utils');
 const { processRelease, getMediaSeason } = require('./rankingService');
 const { httpGet } = require('./httpClient');
+const rootLogger = require('./logger');
 
 const STOP_WORDS_QUERY = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'with', 'no', 'na']);
 
-function generateQueryTiers(media) {
+function generateQueryTiers(media, logger) {
+  const log = logger || rootLogger;
   const titles = [media.title, ...(media.aliases || [])]
     .map(t => t.replace(/[:/]/g, ' ').replace(/[^\w\s]/g, '').trim())
     .filter(Boolean);
@@ -86,10 +88,10 @@ function generateQueryTiers(media) {
 
   const reducedTiers = dedupedTiers.slice(0, 8);
 
-  console.log(`[generateQueryTiers] Media: "${media.title}" (${media.category})`);
-  console.log(`[generateQueryTiers] Tiers (reduced to ${reducedTiers.length}):`);
+  log.debug(`[generateQueryTiers] Media: "${media.title}" (${media.category})`);
+  log.debug(`[generateQueryTiers] Tiers (reduced to ${reducedTiers.length}):`);
   reducedTiers.forEach((tier, idx) => {
-    console.log(`  Tier ${idx + 1}: ${JSON.stringify(tier)}`);
+    log.debug(`  Tier ${idx + 1}: ${JSON.stringify(tier)}`);
   });
 
   return reducedTiers;
@@ -121,7 +123,7 @@ async function searchTorrentClaw(title) {
     leechers: t.leechers || 0,
     uploader: t.uploader || t.uploaderName || t.username || ''
   }));
-  console.log(`[torrentclaw] query "${title}" -> ${results.length} results`);
+  rootLogger.debug(`[torrentclaw] query "${title}" -> ${results.length} results`);
   await setCache(cacheKey, results, 3600);
   return results;
 }
@@ -142,12 +144,12 @@ async function searchNyaaRSS(title, category = 'anime', force = false) {
   const cacheKey = `nyaa:${baseUrl}`;
 
   if (force) {
-    console.log(`[nyaa] force delete cache for "${title}" (${category})`);
+    rootLogger.debug(`[nyaa] force delete cache for "${title}" (${category})`);
     await deleteCache(cacheKey);
   } else {
     const cached = await getCache(cacheKey);
     if (cached) {
-      console.log(`[nyaa] cache HIT for "${title}" (${category}) -> ${cached.length} results`);
+      rootLogger.debug(`[nyaa] cache HIT for "${title}" (${category}) -> ${cached.length} results`);
       return cached;
     }
   }
@@ -155,7 +157,7 @@ async function searchNyaaRSS(title, category = 'anime', force = false) {
   await new Promise(resolve => setTimeout(resolve, 1200));
 
   const urlWithBust = `${baseUrl}&_=${Date.now()}`;
-  console.log(`[nyaa] fetching fresh for "${title}" (${category})`);
+  rootLogger.debug(`[nyaa] fetching fresh for "${title}" (${category})`);
   const res = await httpGet(urlWithBust, {
     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
   });
@@ -164,7 +166,7 @@ async function searchNyaaRSS(title, category = 'anime', force = false) {
   const result = await parser.parseStringPromise(text);
   const items = result.rss?.channel?.item;
   const itemArray = items ? (Array.isArray(items) ? items : [items]) : [];
-  console.log(`[nyaa] query "${title}" (${category}) -> ${itemArray.length} items`);
+  rootLogger.debug(`[nyaa] query "${title}" (${category}) -> ${itemArray.length} items`);
 
   const results = itemArray.map(item => {
     const title = item.title || 'Unknown';
@@ -190,7 +192,7 @@ async function searchAnimeGarden(title) {
   const cacheKey = `animegarden:${url}`;
   const cached = await getCache(cacheKey);
   if (cached) {
-    console.log(`[animegarden] cache HIT for "${title}" -> ${cached.length} results`);
+    rootLogger.debug(`[animegarden] cache HIT for "${title}" -> ${cached.length} results`);
     return cached;
   }
 
@@ -204,12 +206,13 @@ async function searchAnimeGarden(title) {
     leechers: r.leechers || 0,
     uploader: r.publisher || r.uploader || ''
   }));
-  console.log(`[animegarden] query "${title}" -> ${results.length} results`);
+  rootLogger.debug(`[animegarden] query "${title}" -> ${results.length} results`);
   await setCache(cacheKey, results, 1800);
   return results;
 }
 
-async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap, force = false) {
+async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap, force = false, logger) {
+  const log = logger || rootLogger;
   const allResults = [];
 
   for (const src of sourceList) {
@@ -217,11 +220,11 @@ async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap,
     if (!searchFn) continue;
 
     const queries = [...new Set(queryTiers.flat().filter(Boolean))];
-    console.log(`[searchWithAggregation] Source "${src}" will run ${queries.length} unique queries (force=${force})`);
-    queries.forEach((q, i) => console.log(`  ${i + 1}. "${q}"`));
+    log.debug(`[searchWithAggregation] Source "${src}" will run ${queries.length} unique queries (force=${force})`);
+    queries.forEach((q, i) => log.debug(`  ${i + 1}. "${q}"`));
 
     const srcResults = await Promise.allSettled(
-      queries.map(q => searchFn(q, force).catch(err => { console.warn(`Source ${src} query "${q}" failed:`, err.message); return []; }))
+      queries.map(q => searchFn(q, force).catch(err => { log.warn(`Source ${src} query "${q}" failed:`, err.message); return []; }))
     );
     for (const result of srcResults) {
       if (result.status === 'fulfilled') {
@@ -230,13 +233,13 @@ async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap,
     }
   }
 
-  console.log(`[aggregate] raw results for "${media.title}": ${allResults.length}`);
+  log.debug(`[aggregate] raw results for "${media.title}": ${allResults.length}`);
 
   const validated = allResults
     .map(r => processRelease(r, media))
     .filter(r => r !== null);
 
-  console.log(`[aggregate] validated results for "${media.title}": ${validated.length}`);
+  log.debug(`[aggregate] validated results for "${media.title}": ${validated.length}`);
 
   const hashMap = new Map();
   for (const r of validated) {
@@ -250,8 +253,9 @@ async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap,
   return deduped;
 }
 
-async function searchAnimeReleases(media, force = false) {
-  const queryTiers = generateQueryTiers(media);
+async function searchAnimeReleases(media, force = false, logger) {
+  const log = logger || rootLogger;
+  const queryTiers = generateQueryTiers(media, log);
 
   const nyaaSearch = async (title, forceSearch = false) => {
     const forceFlag = forceSearch || force;
@@ -269,7 +273,7 @@ async function searchAnimeReleases(media, force = false) {
 
   const sourceList = ['nyaa_rss'];
   const searchFnMap = { nyaa_rss: nyaaSearch };
-  return searchWithAggregation(media, sourceList, queryTiers, searchFnMap, force);
+  return searchWithAggregation(media, sourceList, queryTiers, searchFnMap, force, log);
 }
 
 async function searchReleases(media, force = false) {
@@ -296,11 +300,12 @@ function mergeReleases(primary, fallback) {
   return deduped;
 }
 
-async function searchReleasesWithFallback(media, force = false) {
+async function searchReleasesWithFallback(media, force = false, logger = null) {
+  const log = logger || rootLogger;
   const categoryId = media.category;
   let allRawResults = [];
 
-  const nyaaResults = await searchAnimeReleases(media, force);
+  const nyaaResults = await searchAnimeReleases(media, force, log);
   allRawResults = allRawResults.concat(nyaaResults);
 
   if (nyaaResults.length < 3) {
@@ -318,12 +323,12 @@ async function searchReleasesWithFallback(media, force = false) {
       const clawProcessed = clawRaw.map(r => processRelease(r, media)).filter(r => r !== null);
       allRawResults = allRawResults.concat(gardenProcessed, clawProcessed);
     } catch (err) {
-      console.warn(`Fallback sources failed: ${err.message}`);
+      log.warn(`Fallback sources failed: ${err.message}`);
     }
   }
 
   const merged = mergeReleases(allRawResults, []);
-  console.log(`[final] "${media.title}" -> total unique releases: ${merged.length}`);
+  log.debug(`[final] "${media.title}" -> total unique releases: ${merged.length}`);
   return merged;
 }
 
