@@ -1,12 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const Joi = require('joi');
+const crypto = require('crypto');
 const { validate } = require('../middleware/validate');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
 const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, CoverageType, TRUSTED_GROUPS, MediaType } = require('../config');
-const { fetchAniList, searchAnilistByTitle, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia } = require('../services/metadataService');
+const { fetchAniList, searchAnilistByTitle, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia, mediaToCard } = require('../services/metadataService');
 const { searchReleasesWithFallback } = require('../services/torrentService');
 const logger = require('../services/logger');
 
@@ -376,49 +377,132 @@ router.post('/releases/batch', validate(batchReleasesSchema, 'body'), asyncHandl
   res.json({ results });
 }));
 
-router.post('/recommendations', validate(recommendationsSchema, 'body'), asyncHandler(async (req, res) => {
-  const { bookmarks = [] } = req.body;
-  if (!process.env.GROQ_API_KEY) {
-    logger.warn('GROQ_API_KEY not set, recommendations disabled');
-    return res.json({ items: [] });
-  }
-  if (bookmarks.length === 0) {
-    return res.json({ items: [] });
-  }
+function generateCacheKey(bookmarks) {
+  const sortedIds = bookmarks
+    .map(b => b.id || b.mediaId || '')
+    .filter(Boolean)
+    .sort()
+    .join(':');
+  const hash = crypto.createHash('sha256').update(sortedIds).digest('hex');
+  return `recommendations:${hash}`;
+}
 
-  const titles = bookmarks.map(b => b.title).filter(Boolean).join(', ');
-  const prompt = `Given these anime/tokusatsu titles: ${titles}. Recommend 6 similar titles. Return only a JSON array of objects with fields: title, subtitle (e.g., "Series · 2022 · 12 eps"), category (anime or tokusatsu), mediaType (series or movie), year, poster (empty string).`;
+async function fetchRecommendationsFromGroq(bookmarks) {
+  const bookmarkInfo = bookmarks.map(b => {
+    const title = b.title || b.media?.title || 'Unknown';
+    const genres = b.genres || b.media?.genres || [];
+    const category = b.category || b.media?.category || 'anime';
+    return `${title} (${category}${genres.length ? `, genres: ${genres.join(', ')}` : ''})`;
+  }).join('\n');
+
+  const prompt = `You are an expert in anime and tokusatsu recommendations. Based on the user's following bookmarks, suggest 6 similar titles they might enjoy.
+
+Bookmarks:
+${bookmarkInfo}
+
+Return ONLY a JSON array of AniList IDs (integers). Do not include any other text, explanation, or formatting. Example: [12345, 67890, 11111, 22222, 33333, 44444]`;
 
   try {
-    const result = await callGroq(prompt);
-    let items = [];
+    const response = await callGroq(prompt);
+    let ids = [];
     try {
-      const parsed = JSON.parse(result);
+      const cleaned = response.replace(/```json\s*|\s*```/g, '').trim();
+      const parsed = JSON.parse(cleaned);
       if (Array.isArray(parsed)) {
-        items = parsed.slice(0, 6).map(item => ({
-          ...item,
-          id: `rec:${Date.now()}-${Math.random()}`
-        }));
+        ids = parsed.filter(id => Number.isInteger(id) && id > 0);
       }
     } catch (_) {
-      const match = result.match(/\[[\s\S]*\]/);
+      const match = response.match(/\[[\s\d,.]+\]/);
       if (match) {
         try {
           const parsed = JSON.parse(match[0]);
           if (Array.isArray(parsed)) {
-            items = parsed.slice(0, 6).map(item => ({
-              ...item,
-              id: `rec:${Date.now()}-${Math.random()}`
-            }));
+            ids = parsed.filter(id => Number.isInteger(id) && id > 0);
           }
         } catch (__) {}
       }
     }
-    res.json({ items });
+    return ids;
   } catch (err) {
-    logger.error({ err }, 'Recommendations error');
-    res.json({ items: [] });
+    logger.error({ err }, 'Groq recommendation fetch failed');
+    return [];
   }
+}
+
+async function fetchAniListMediaByIds(ids) {
+  if (!ids.length) return [];
+  const query = `
+    query($ids: [Int]) {
+      Page(page: 1, perPage: 50) {
+        media(id_in: $ids, type: ANIME) {
+          id
+          title { romaji english native }
+          synonyms
+          seasonYear
+          coverImage { medium large }
+          format
+          episodes
+          chapters
+          status
+          genres
+          isAdult
+          popularity
+        }
+      }
+    }
+  `;
+  try {
+    const data = await fetchAniList(query, { ids });
+    if (!data.Page || !data.Page.media) return [];
+    return data.Page.media;
+  } catch (err) {
+    logger.error({ err, ids }, 'Failed to fetch AniList media by IDs');
+    return [];
+  }
+}
+
+router.post('/recommendations', validate(recommendationsSchema, 'body'), asyncHandler(async (req, res) => {
+  const { bookmarks = [] } = req.body;
+
+  if (!process.env.GROQ_API_KEY) {
+    logger.warn('GROQ_API_KEY not set, recommendations disabled');
+    return res.json({ items: [] });
+  }
+
+  if (bookmarks.length === 0) {
+    return res.json({ items: [] });
+  }
+
+  const cacheKey = generateCacheKey(bookmarks);
+  const cached = await getCache(cacheKey);
+  if (cached) {
+    logger.info({ cacheKey }, 'Recommendations cache hit');
+    return res.json(cached);
+  }
+
+  logger.info({ cacheKey, count: bookmarks.length }, 'Recommendations cache miss, fetching from Groq');
+
+  const recommendedIds = await fetchRecommendationsFromGroq(bookmarks);
+
+  if (!recommendedIds.length) {
+    return res.json({ items: [] });
+  }
+
+  const rawMedia = await fetchAniListMediaByIds(recommendedIds);
+  if (!rawMedia.length) {
+    return res.json({ items: [] });
+  }
+
+  const items = rawMedia.map(item => {
+    const normalized = normalizeAniListMedia(item, 'anime', []);
+    return mediaToCard(normalized);
+  }).filter(Boolean);
+
+  const responseData = { items };
+
+  await setCache(cacheKey, responseData, 86400);
+
+  res.json(responseData);
 }));
 
 router.post('/ai-search', validate(aiSearchSchema, 'body'), asyncHandler(async (req, res) => {
