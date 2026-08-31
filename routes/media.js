@@ -8,6 +8,7 @@ const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, CoverageType, TRUSTED_GROUPS, MediaType } = require('../config');
 const { fetchAniList, searchAnilistByTitle, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia } = require('../services/metadataService');
 const { searchReleasesWithFallback } = require('../services/torrentService');
+const logger = require('../services/logger');
 
 function getCategory(id) { return categoryConfig[id] || null; }
 
@@ -25,7 +26,7 @@ const batchReleasesSchema = Joi.object({
     id: Joi.string().required(),
     category: Joi.string().valid('anime', 'tokusatsu').required(),
     title: Joi.string().allow('').optional()
-  })).min(1).max(20).required()
+  })).min(1).max(50).required()
 });
 
 const recommendationsSchema = Joi.object({
@@ -44,7 +45,7 @@ async function fallbackFetchAnimeByTitle(title, categoryId) {
       return normalizeJikanMedia(jikanResults[0], categoryId);
     }
   } catch (err) {
-    console.warn(`Jikan fallback failed: ${err.message}`);
+    logger.warn({ err, title }, 'Jikan fallback failed');
   }
   if (process.env.TMDB_API_KEY) {
     try {
@@ -54,7 +55,7 @@ async function fallbackFetchAnimeByTitle(title, categoryId) {
         return normalizeTmdbMedia(filtered[0], categoryId);
       }
     } catch (err) {
-      console.warn(`TMDB fallback failed: ${err.message}`);
+      logger.warn({ err, title }, 'TMDB fallback failed');
     }
   }
   return null;
@@ -114,7 +115,7 @@ async function getMediaObject(mediaId, categoryId, title) {
       }
       if (rawMedia) return normalizeAniListMedia(rawMedia, categoryId, relations);
     } catch (err) {
-      console.warn(`AniList detail failed: ${err.message}`);
+      logger.warn({ err, mediaId }, 'AniList detail failed');
       if (title) return await fallbackFetchAnimeByTitle(title, categoryId);
     }
   } else if (provider === 'jikan') {
@@ -129,7 +130,7 @@ async function getMediaObject(mediaId, categoryId, title) {
         return normalizeJikanMedia(data.data, categoryId);
       }
     } catch (err) {
-      console.warn(`Jikan detail failed: ${err.message}`);
+      logger.warn({ err, mediaId }, 'Jikan detail failed');
       if (title) return await fallbackFetchAnimeByTitle(title, categoryId);
     }
   } else if (provider === 'tmdb') {
@@ -144,7 +145,7 @@ async function getMediaObject(mediaId, categoryId, title) {
         return normalizeTmdbMedia(data, categoryId);
       }
     } catch (err) {
-      console.warn(`TMDB detail failed: ${err.message}`);
+      logger.warn({ err, mediaId }, 'TMDB detail failed');
       if (title) return await fallbackFetchAnimeByTitle(title, categoryId);
     }
   }
@@ -315,21 +316,22 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
 router.post('/releases/batch', validate(batchReleasesSchema, 'body'), asyncHandler(async (req, res) => {
   const { items } = req.body;
   const results = [];
-  for (const item of items) {
+
+  const fetchPromises = items.map(async (item) => {
     try {
       const config = getCategory(item.category);
-      if (!config) continue;
+      if (!config) return { id: item.id, error: 'Invalid category' };
       let mediaId = item.id;
       let title = item.title || '';
       if (mediaId.startsWith('franchise:')) {
-        if (!title) continue;
+        if (!title) return { id: item.id, error: 'Title required for franchise' };
         const media = await searchAnilistByTitle(title);
-        if (!media) continue;
+        if (!media) return { id: item.id, error: 'Media not found' };
         mediaId = `anilist:${media.id}`;
         title = media.title?.romaji || media.title?.english || title;
       }
       const mediaObject = await getMediaObject(mediaId, item.category, title);
-      if (!mediaObject) continue;
+      if (!mediaObject) return { id: item.id, error: 'Media object not found' };
       const releases = await searchReleasesWithFallback(mediaObject, false);
       const singles = releases.filter(r => r.coverageType === CoverageType.SINGLE && r.episodeStart !== null);
       const nonSingles = releases.filter(r => r.coverageType !== CoverageType.SINGLE || r.episodeStart === null);
@@ -350,23 +352,34 @@ router.post('/releases/batch', validate(batchReleasesSchema, 'body'), asyncHandl
         if (b.coverageType === CoverageType.SINGLE) return -1;
         return b.score - a.score;
       });
-      results.push({
+      return {
         id: item.id,
         title: mediaObject.title,
         releases: sorted,
         total: sorted.length
-      });
+      };
     } catch (err) {
-      console.warn(`Batch release failed for ${item.id}:`, err.message);
-      results.push({ id: item.id, error: err.message });
+      logger.warn({ err, item }, 'Batch release item failed');
+      return { id: item.id, error: err.message };
+    }
+  });
+
+  const settledResults = await Promise.allSettled(fetchPromises);
+  for (const result of settledResults) {
+    if (result.status === 'fulfilled') {
+      results.push(result.value);
+    } else {
+      logger.warn({ err: result.reason }, 'Batch promise rejected');
     }
   }
+
   res.json({ results });
 }));
 
 router.post('/recommendations', validate(recommendationsSchema, 'body'), asyncHandler(async (req, res) => {
   const { bookmarks = [] } = req.body;
   if (!process.env.GROQ_API_KEY) {
+    logger.warn('GROQ_API_KEY not set, recommendations disabled');
     return res.json({ items: [] });
   }
   if (bookmarks.length === 0) {
@@ -403,13 +416,16 @@ router.post('/recommendations', validate(recommendationsSchema, 'body'), asyncHa
     }
     res.json({ items });
   } catch (err) {
-    console.error('Recommendations error:', err);
+    logger.error({ err }, 'Recommendations error');
     res.json({ items: [] });
   }
 }));
 
 router.post('/ai-search', validate(aiSearchSchema, 'body'), asyncHandler(async (req, res) => {
-  if (!process.env.GROQ_API_KEY) throw new ApiError(503, 'Groq not configured', 'GROQ_NOT_CONFIGURED');
+  if (!process.env.GROQ_API_KEY) {
+    logger.warn('GROQ_API_KEY not set, AI search disabled');
+    throw new ApiError(503, 'Groq not configured', 'GROQ_NOT_CONFIGURED');
+  }
   const prompt = req.body.prompt;
   const result = await callGroq(`Parse this user media search prompt into structured JSON filters: "${prompt}"`);
   res.json({ success: true, filters: result });
