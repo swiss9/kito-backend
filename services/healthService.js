@@ -1,4 +1,5 @@
 const { TMDB_API_KEY } = require('../config');
+const { kv } = require('@vercel/kv');
 
 async function checkTmdb() {
   if (!TMDB_API_KEY) return 'missing_key';
@@ -33,4 +34,14 @@ async function checkTorrentclaw() {
   }
 }
 
-module.exports = { checkTmdb, checkAnilist, checkTorrentclaw };
+async function checkKv() {
+  try {
+    await kv.set('health:ping', 'pong', { ex: 10 });
+    const result = await kv.get('health:ping');
+    return result === 'pong' ? 'ok' : 'error';
+  } catch {
+    return 'timeout';
+  }
+}
+
+module.exports = { checkTmdb, checkAnilist, checkTorrentclaw, checkKv };
