@@ -353,15 +353,33 @@ function validateRelease(parsed, media) {
     }
   }
 
-  if (franchise === 'kamen rider' && workName) {
-    const hasOther = hasOtherKamenRiderWork(releaseNorm, workName);
-    if (hasOther) {
-      const isExact = mediaTitles.some(mt => releaseTitle.includes(mt));
-      if (!isExact) {
+  if (franchise === 'kamen rider') {
+    let effectiveWorkName = workName;
+    if (!effectiveWorkName && year === 1971 && (media.title.includes('Kamen Rider') || media.title.includes('Masked Rider'))) {
+      effectiveWorkName = '1971';
+    }
+    if (effectiveWorkName === '1971') {
+      const has1971 = releaseNorm.includes('1971');
+      const hasOther = hasOtherKamenRiderWork(releaseNorm, '1971');
+      if (!has1971 || hasOther) {
         valid = false;
-        reasons.push('other_kamen_rider_work');
+        reasons.push(has1971 ? 'other_kamen_rider_work' : 'missing_1971_year');
         return { valid: false, confidence: 0, reasons };
       }
+    } else if (effectiveWorkName) {
+      const hasWork = releaseNorm.includes(effectiveWorkName);
+      if (!hasWork) {
+        const isExact = mediaTitles.some(mt => releaseTitle.includes(mt));
+        if (!isExact) {
+          valid = false;
+          reasons.push('work_name_mismatch');
+          return { valid: false, confidence: 0, reasons };
+        }
+      }
+    } else {
+      valid = false;
+      reasons.push('unknown_kamen_rider_work');
+      return { valid: false, confidence: 0, reasons };
     }
   }
 
