@@ -1,4 +1,5 @@
 const { kv } = require('@vercel/kv');
+const logger = require('./logger');
 
 const memoryCache = new Map();
 const cacheTimers = new Map();
@@ -9,7 +10,7 @@ async function getCache(key) {
       const value = await kv.get(key);
       return value ? (typeof value === 'string' ? JSON.parse(value) : value) : null;
     } catch (err) {
-      console.warn('Vercel KV get failed, falling back to memory:', err.message);
+      logger.warn({ err, key }, 'Vercel KV get failed, falling back to memory');
     }
   }
   return memoryCache.get(key) || null;
@@ -21,7 +22,7 @@ async function setCache(key, data, ttlSeconds = 3600) {
       await kv.set(key, JSON.stringify(data), { ex: ttlSeconds });
       return;
     } catch (err) {
-      console.warn('Vercel KV set failed, using memory cache:', err.message);
+      logger.warn({ err, key }, 'Vercel KV set failed, using memory cache');
     }
   }
 
@@ -46,7 +47,7 @@ async function deleteCache(key) {
       await kv.del(key);
       return;
     } catch (err) {
-      console.warn('Vercel KV del failed, falling back to memory:', err.message);
+      logger.warn({ err, key }, 'Vercel KV del failed, falling back to memory');
     }
   }
   memoryCache.delete(key);
@@ -65,7 +66,7 @@ async function clearAllCache() {
       await kv.flushdb();
       return;
     } catch (err) {
-      console.warn('Vercel KV flushdb failed:', err.message);
+      logger.warn({ err }, 'Vercel KV flushdb failed');
     }
   }
   for (const timer of cacheTimers.values()) {
