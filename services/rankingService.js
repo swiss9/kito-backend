@@ -1,5 +1,5 @@
 const { normalizeTitle, extractReleaseTitle, escapeRegex, getReleaseGroup } = require('../utils');
-const { CoverageType, MediaType, SEQUEL_KEYWORDS, TRUSTED_GROUPS, OTHER_SERIES, ALIAS_MAP, KAMEN_RIDER_WORKS } = require('../config');
+const { CoverageType, MediaType, SEQUEL_KEYWORDS, TRUSTED_GROUPS, OTHER_SERIES, ALIAS_MAP } = require('../config');
 
 const FORMAT_KEYWORDS = new Set(['movie', 'film', 'ova', 'special']);
 const STOP_WORDS = new Set(['the', 'movie', 'film', 'ova', 'special', 'part', 'no', 'na', 'wa', 'to']);
@@ -37,7 +37,7 @@ function getCanonicalWorkName(media) {
       const riderIndex = norm.indexOf('rider');
       if (riderIndex !== -1) {
         let rest = norm.slice(riderIndex + 5).trim();
-        rest = rest.replace(/^[\s:\-–—()]+/, '').replace(/[\s:\-–—()]+$/, '');
+        rest = rest.replace(/^[\s:\-â€“â€”()]+/, '').replace(/[\s:\-â€“â€”()]+$/, '');
         if (rest.length > 0 && !/^\d{4}$/.test(rest)) {
           return rest;
         }
@@ -89,7 +89,7 @@ function getRelatedWorks(media) {
 
 function hasOtherKamenRiderWork(releaseNorm, workName) {
   const workLower = workName ? workName.toLowerCase() : '';
-  for (const other of KAMEN_RIDER_WORKS) {
+  for (const other of OTHER_SERIES) {
     if (other === workLower) continue;
     if (releaseNorm.includes(other)) return true;
   }
@@ -166,10 +166,10 @@ function extractSeasonNumber(name) {
 function extractEpisodeRange(name) {
   const clean = name.replace(/\[.*?\]|\(.*?\)/g, ' ');
   const patterns = [
-    /(\d+)\s*[-–~]\s*(\d+)/,
-    /[Ss](\d+)[Ee](\d+)\s*[-–~]\s*[Ee]?(\d+)/,
-    /[Ee]p(?:isode)?\s*(\d+)\s*[-–~]\s*(\d+)/i,
-    /[Ee](\d+)\s*[-–~]\s*[Ee]?(\d+)/
+    /(\d+)\s*[-â€“~]\s*(\d+)/,
+    /[Ss](\d+)[Ee](\d+)\s*[-â€“~]\s*[Ee]?(\d+)/,
+    /[Ee]p(?:isode)?\s*(\d+)\s*[-â€“~]\s*(\d+)/i,
+    /[Ee](\d+)\s*[-â€“~]\s*[Ee]?(\d+)/
   ];
   for (const pat of patterns) {
     const match = clean.match(pat);
