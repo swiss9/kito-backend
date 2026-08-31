@@ -1,3 +1,5 @@
+const logger = require('../services/logger');
+
 class ApiError extends Error {
   constructor(statusCode, message, code = 'INTERNAL_ERROR', details = null) {
     super(message);
@@ -19,7 +21,7 @@ const errorHandler = (err, req, res, next) => {
     });
   }
 
-  console.error('Unhandled error:', err);
+  logger.error({ err }, 'Unhandled error');
   res.status(500).json({
     error: {
       code: 'INTERNAL_ERROR',
