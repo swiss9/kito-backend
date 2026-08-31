@@ -47,5 +47,17 @@
     "geats": ["geats", "kamen rider geats"],
     "gotchard": ["gotchard", "kamen rider gotchard"],
     "gavv": ["gavv", "kamen rider gavv"]
+  },
+  "QUERY_CORRECTIONS": {
+    "yourname": "your name",
+    "kamenrider": "kamen rider",
+    "supersentai": "super sentai",
+    "ultraman": "ultraman",
+    "dragonball": "dragon ball",
+    "dragonballz": "dragon ball z",
+    "dragonballsuper": "dragon ball super",
+    "narutoshippuden": "naruto shippuden",
+    "onepiece": "one piece",
+    "attackontitan": "attack on titan"
   }
 }
