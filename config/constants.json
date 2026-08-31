@@ -19,13 +19,6 @@
     "black", "rx", "stronger", "skyrider", "super 1", "black rx",
     "outsiders", "shin", "girls", "amazons", "amazon"
   ],
-  "KAMEN_RIDER_WORKS": [
-    "geats", "gaim", "ex-aid", "drive", "build", "ghost", "kiva",
-    "w", "ooo", "den-o", "hibiki", "kabuto", "blade", "ryuki",
-    "revice", "saber", "zero-one", "gotchard", "gavv", "decade",
-    "agito", "faiz", "kuuga", "fourze", "wizard", "zi-o",
-    "black", "rx", "stronger", "skyrider", "super 1"
-  ],
   "ALIAS_MAP": {
     "zeztz": ["zeztz", "kamen rider zeztz"],
     "fourze": ["fourze", "kamen rider fourze"],
@@ -41,8 +34,6 @@
     "kiva": ["kiva", "kamen rider kiva"],
     "decade": ["decade", "kamen rider decade"],
     "w": ["w", "double", "kamen rider w", "kamen rider double"],
-    "ooo": ["ooo", "ozu", "kamen rider ooo", "kamen rider ozu"],
-    "fourze": ["fourze", "kamen rider fourze"],
     "wizard": ["wizard", "kamen rider wizard"],
     "gaim": ["gaim", "kamen rider gaim"],
     "drive": ["drive", "kamen rider drive"],
