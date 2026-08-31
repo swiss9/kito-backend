@@ -1,10 +1,19 @@
 async function httpGet(url, options = {}, { retries = 3, timeout = 8000 } = {}) {
   let lastError;
-  for (let attempt = 1; attempt <= retries + 1; attempt++) {
+  let attempt = 1;
+  while (attempt <= retries + 1) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
     try {
       const res = await fetch(url, { ...options, signal: controller.signal, method: 'GET' });
+      if (res.status === 429) {
+        const retryAfter = parseInt(res.headers.get('Retry-After') || '5');
+        const waitMs = Math.min(retryAfter * 1000, 30000);
+        console.warn(`HTTP GET ${url} received 429, waiting ${waitMs}ms (attempt ${attempt}/${retries + 1})`);
+        await new Promise(r => setTimeout(r, waitMs));
+        attempt++;
+        continue;
+      }
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -13,8 +22,10 @@ async function httpGet(url, options = {}, { retries = 3, timeout = 8000 } = {}) 
       lastError = err;
       console.warn(`HTTP GET ${url} failed (attempt ${attempt}/${retries + 1}): ${err.message}`);
       if (attempt <= retries) {
-        await new Promise(r => setTimeout(r, 500 * attempt));
+        const delay = Math.min(500 * attempt, 5000);
+        await new Promise(r => setTimeout(r, delay));
       }
+      attempt++;
     } finally {
       clearTimeout(timer);
     }
@@ -24,7 +35,8 @@ async function httpGet(url, options = {}, { retries = 3, timeout = 8000 } = {}) 
 
 async function httpPost(url, body, options = {}, { retries = 2, timeout = 8000 } = {}) {
   let lastError;
-  for (let attempt = 1; attempt <= retries + 1; attempt++) {
+  let attempt = 1;
+  while (attempt <= retries + 1) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
     try {
@@ -35,6 +47,14 @@ async function httpPost(url, body, options = {}, { retries = 2, timeout = 8000 }
         headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
         signal: controller.signal,
       });
+      if (res.status === 429) {
+        const retryAfter = parseInt(res.headers.get('Retry-After') || '5');
+        const waitMs = Math.min(retryAfter * 1000, 30000);
+        console.warn(`HTTP POST ${url} received 429, waiting ${waitMs}ms (attempt ${attempt}/${retries + 1})`);
+        await new Promise(r => setTimeout(r, waitMs));
+        attempt++;
+        continue;
+      }
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -43,8 +63,10 @@ async function httpPost(url, body, options = {}, { retries = 2, timeout = 8000 }
       lastError = err;
       console.warn(`HTTP POST ${url} failed (attempt ${attempt}/${retries + 1}): ${err.message}`);
       if (attempt <= retries) {
-        await new Promise(r => setTimeout(r, 500 * attempt));
+        const delay = Math.min(500 * attempt, 5000);
+        await new Promise(r => setTimeout(r, delay));
       }
+      attempt++;
     } finally {
       clearTimeout(timer);
     }
