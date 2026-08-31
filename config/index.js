@@ -8,11 +8,15 @@ const TMDB_API_KEY = process.env.TMDB_API_KEY;
 const TORRENTCLAW_API_KEY = process.env.TORRENTCLAW_API_KEY;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
-const requiredEnv = ['TMDB_API_KEY', 'TORRENTCLAW_API_KEY', 'GROQ_API_KEY'];
+const requiredEnv = ['TMDB_API_KEY', 'TORRENTCLAW_API_KEY'];
 for (const key of requiredEnv) {
   if (!process.env[key]) {
     throw new Error(`Missing required environment variable: ${key}`);
   }
+}
+
+if (!GROQ_API_KEY) {
+  console.warn('GROQ_API_KEY is not set. AI features (recommendations, AI search) will be disabled.');
 }
 
 const CoverageType = {
@@ -31,6 +35,8 @@ const MediaType = {
 const SEQUEL_KEYWORDS = constants.SEQUEL_KEYWORDS;
 const TRUSTED_GROUPS = constants.TRUSTED_GROUPS;
 const OTHER_SERIES = constants.OTHER_SERIES;
+const KAMEN_RIDER_WORKS = constants.KAMEN_RIDER_WORKS || [];
+const ALIAS_MAP = constants.ALIAS_MAP || {};
 
 const categoryConfig = {
   anime: {
@@ -56,5 +62,7 @@ module.exports = {
   SEQUEL_KEYWORDS,
   TRUSTED_GROUPS,
   OTHER_SERIES,
+  KAMEN_RIDER_WORKS,
+  ALIAS_MAP,
   categoryConfig
 };
