@@ -5,28 +5,15 @@ const { validate } = require('../middleware/validate');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
 const { getCache, setCache } = require('../services/cacheService');
-const { categoryConfig, MediaType } = require('../config');
+const { categoryConfig, MediaType, QUERY_CORRECTIONS } = require('../config');
 const { fetchAniList, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia, mediaToCard } = require('../services/metadataService');
 const { stripSeasonInfo, normalizeTitle, escapeRegex } = require('../utils');
-
-const queryCorrections = {
-  'yourname': 'your name',
-  'kamenrider': 'kamen rider',
-  'supersentai': 'super sentai',
-  'ultraman': 'ultraman',
-  'dragonball': 'dragon ball',
-  'dragonballz': 'dragon ball z',
-  'dragonballsuper': 'dragon ball super',
-  'narutoshippuden': 'naruto shippuden',
-  'onepiece': 'one piece',
-  'attackontitan': 'attack on titan'
-};
 
 function normalizeSearchQuery(raw) {
   const trimmed = raw.trim();
   const lower = trimmed.toLowerCase();
-  if (queryCorrections[lower]) {
-    return queryCorrections[lower];
+  if (QUERY_CORRECTIONS[lower]) {
+    return QUERY_CORRECTIONS[lower];
   }
   return trimmed;
 }
@@ -147,7 +134,7 @@ function groupByFranchise(items) {
       id: `franchise:${base}`,
       title: cleanTitle,
       aliases,
-      subtitle: `${seasons.length} seasons${minYear ? ` · ${minYear}${maxYear && maxYear !== minYear ? '–' + maxYear : ''}` : ''}`,
+      subtitle: `${seasons.length} seasons${minYear ? ` Â· ${minYear}${maxYear && maxYear !== minYear ? 'â€“' + maxYear : ''}` : ''}`,
       category: first.category,
       mediaType: 'collection',
       year: minYear,
@@ -222,11 +209,8 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   if (!force) {
     const cached = await getCache(cacheKey);
     if (cached) {
-      console.log(`[cache] HIT for "${normalizedQ}"`);
       return res.json(cached);
     }
-  } else {
-    console.log(`[force] Bypassing cache for "${normalizedQ}"`);
   }
 
   const categories = category === 'any' ? getCategories() : [category];
@@ -253,7 +237,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
         const data = await fetchAniList(query, variables);
         items = (data.Page.media || []).map(item => mediaToCard(normalizeAniListMedia(item, catId, [])));
       } catch (err) {
-        console.warn(`AniList failed: ${err.message}`);
+        req.logger.warn({ err }, 'AniList failed');
       }
 
       if (items.length === 0) {
@@ -261,7 +245,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
           const jikanData = await searchJikan(normalizedQuery);
           items = jikanData.map(item => mediaToCard(normalizeJikanMedia(item, catId)));
         } catch (err) {
-          console.warn(`Jikan failed: ${err.message}`);
+          req.logger.warn({ err }, 'Jikan failed');
         }
       }
 
@@ -283,7 +267,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
           }
           items = tmdbResults.map(item => mediaToCard(normalizeTmdbMedia(item, catId))).filter(Boolean);
         } catch (err) {
-          console.warn(`TMDB fallback failed: ${err.message}`);
+          req.logger.warn({ err }, 'TMDB fallback failed');
         }
       }
       allResults.push(...items);
@@ -310,12 +294,12 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
             const items = results.map(item => mediaToCard(normalizeTmdbMedia(item, catId))).filter(Boolean);
             tokusatsuItems.push(...items);
           } catch (err) {
-            console.warn(`TMDB search ${type} failed: ${err.message}`);
+            req.logger.warn({ err }, `TMDB search ${type} failed`);
           }
         }
         allResults.push(...tokusatsuItems);
       } catch (err) {
-        console.warn(`Tokusatsu TMDB error: ${err.message}`);
+        req.logger.warn({ err }, 'Tokusatsu TMDB error');
       }
     }
   }
@@ -339,7 +323,6 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   });
 
   if (exactMatchItems.length > 0) {
-    console.log(`[filter] Exact match found for "${normalizedQueryTitle}", applying filters...`);
     const phraseRegex = new RegExp(`\\b${escapeRegex(normalizedQueryTitle)}\\b`, 'i');
     allResults = allResults.filter(item => {
       const titles = [item.title, ...(item.aliases || [])].map(t => normalizeTitle(t));
@@ -357,7 +340,6 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
     const topResult = allResults[0];
     if (topResult && (topResult.mediaType === MediaType.MOVIE || (topResult.popularity && topResult.popularity > 50))) {
       const targetMediaType = topResult.mediaType;
-      console.log(`[filter] Restricting to media type ${targetMediaType} (top result: ${topResult.title}, popularity: ${topResult.popularity || 0})`);
       allResults = allResults.filter(item => item.mediaType === targetMediaType);
 
       if (targetMediaType === MediaType.MOVIE) {
@@ -367,8 +349,6 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
         });
       }
     }
-  } else {
-    console.log(`[filter] No exact match, skipping phrase filter`);
   }
 
   let unique = [];
@@ -457,8 +437,6 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
       ttlSeconds = 21600;
     }
     await setCache(cacheKey, responseData, ttlSeconds);
-  } else {
-    console.log(`[force] Not caching result for "${normalizedQ}"`);
   }
 
   res.json(responseData);
