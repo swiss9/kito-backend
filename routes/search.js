@@ -134,7 +134,7 @@ function groupByFranchise(items) {
       id: `franchise:${base}`,
       title: cleanTitle,
       aliases,
-      subtitle: `${seasons.length} seasons${minYear ? ` · ${minYear}${maxYear && maxYear !== minYear ? '–' + maxYear : ''}` : ''}`,
+      subtitle: `${seasons.length} seasons${minYear ? ` Â· ${minYear}${maxYear && maxYear !== minYear ? 'â€“' + maxYear : ''}` : ''}`,
       category: first.category,
       mediaType: 'collection',
       year: minYear,
@@ -186,48 +186,49 @@ async function fetchTmdbSearchWithRetry(url, retries = 3) {
   throw lastError || new Error('TMDB request failed');
 }
 
+function cleanTitleForMatch(title) {
+  if (!title) return '';
+  return title
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\b(Series|TV|Movie|Film|Special|OVA|ONA|Anime|Episode|Batch|Complete|Season|Collection|Edition|Version|Remastered|Dub|Sub|BD|DVD|BluRay|WEB|DL|1080p|720p|480p|360p|4k|HD|SD|HEVC|x264|x265|HDR|10bit|8bit|Multi-Subs|Multi-Audio|Dual-Audio|Eng|Jap|JPN|ENG|Multi)[:\s]*/gi, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
 function deduplicateSearchResults(items) {
   const merged = new Map();
-
   for (const item of items) {
-    const normalizedTitle = normalizeTitle(item.title);
+    const keyTitle = cleanTitleForMatch(item.title);
     const year = item.year || '';
-    const key = `${normalizedTitle}|${year}`;
+    const key = `${keyTitle}|${year}`;
 
     if (merged.has(key)) {
       const existing = merged.get(key);
-      if (item.provider === 'anilist' || item.provider === 'tmdb' || item.provider === 'jikan') {
-        if (item.provider === 'anilist') {
-          existing.provider = 'anilist';
-          existing.providerId = item.providerId;
-        }
-        if (item.poster && !existing.poster) {
-          existing.poster = item.poster;
-        }
-        if (item.subtitle && !existing.subtitle) {
-          existing.subtitle = item.subtitle;
-        }
-        if (item.episodeCount && !existing.episodeCount) {
-          existing.episodeCount = item.episodeCount;
-        }
-        if (item.genres && item.genres.length > existing.genres.length) {
-          existing.genres = item.genres;
-        }
-        if (item.popularity && item.popularity > existing.popularity) {
-          existing.popularity = item.popularity;
-        }
-        if (!existing.category && item.category) {
-          existing.category = item.category;
-        }
-        if (item.aliases) {
-          existing.aliases = [...new Set([...existing.aliases, ...item.aliases])];
-        }
+      if (item.provider === 'anilist') {
+        existing.provider = 'anilist';
+        existing.providerId = item.providerId;
+        if (item.poster) existing.poster = item.poster;
+        if (item.subtitle) existing.subtitle = item.subtitle;
+        if (item.episodeCount) existing.episodeCount = item.episodeCount;
+        if (item.genres && item.genres.length > existing.genres.length) existing.genres = item.genres;
+        if (item.popularity && item.popularity > existing.popularity) existing.popularity = item.popularity;
+        if (item.aliases) existing.aliases = [...new Set([...existing.aliases, ...item.aliases])];
+        if (!existing.category && item.category) existing.category = item.category;
+      } else if (item.provider === 'tmdb' && existing.provider !== 'anilist') {
+        if (item.poster && !existing.poster) existing.poster = item.poster;
+        if (item.subtitle && !existing.subtitle) existing.subtitle = item.subtitle;
+        if (item.episodeCount && !existing.episodeCount) existing.episodeCount = item.episodeCount;
+        if (item.genres && item.genres.length > existing.genres.length) existing.genres = item.genres;
+        if (item.popularity && item.popularity > existing.popularity) existing.popularity = item.popularity;
+        if (item.aliases) existing.aliases = [...new Set([...existing.aliases, ...item.aliases])];
+        if (!existing.category && item.category) existing.category = item.category;
       }
     } else {
       merged.set(key, { ...item });
     }
   }
-
   return Array.from(merged.values());
 }
 
