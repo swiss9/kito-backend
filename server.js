@@ -82,7 +82,12 @@ app.delete('/api/admin/cache', adminLimiter, async (req, res) => {
     }
   } catch (err) {
     req.logger.error({ err }, 'Cache clear failed');
-    res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Cache clear failed' } });
+    res.status(500).json({
+      error: {
+        code: 'CACHE_CLEAR_FAILED',
+        message: err.message || 'Cache clear operation failed'
+      }
+    });
   }
 });
 
