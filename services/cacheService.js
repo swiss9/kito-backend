@@ -2,58 +2,67 @@ const { kv } = require('@vercel/kv');
 const logger = require('./logger');
 
 const memoryCache = new Map();
-const cacheTimers = new Map();
 
-async function getCache(key) {
-  if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
+function safeParse(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') {
     try {
-      const value = await kv.get(key);
-      return value ? (typeof value === 'string' ? JSON.parse(value) : value) : null;
-    } catch (err) {
-      logger.warn({ err, key }, 'Vercel KV get failed, falling back to memory');
+      return JSON.parse(value);
+    } catch (_) {
+      return value;
     }
   }
-  return memoryCache.get(key) || null;
+  return value;
+}
+
+async function getCache(key) {
+  try {
+    const kvValue = await kv.get(key);
+    if (kvValue !== null && kvValue !== undefined) {
+      const parsed = safeParse(kvValue);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+    if (memoryCache.has(key)) {
+      const entry = memoryCache.get(key);
+      if (entry.expiry > Date.now()) {
+        return entry.value;
+      }
+      memoryCache.delete(key);
+    }
+    return null;
+  } catch (err) {
+    logger.warn({ err, key }, 'KV get failed, falling back to memory');
+    if (memoryCache.has(key)) {
+      const entry = memoryCache.get(key);
+      if (entry.expiry > Date.now()) {
+        return entry.value;
+      }
+      memoryCache.delete(key);
+    }
+    return null;
+  }
 }
 
 async function setCache(key, data, ttlSeconds = 3600) {
-  if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
-    try {
-      await kv.set(key, JSON.stringify(data), { ex: ttlSeconds });
-      return;
-    } catch (err) {
-      logger.warn({ err, key }, 'Vercel KV set failed, using memory cache');
-    }
+  try {
+    const serialized = JSON.stringify(data);
+    await kv.set(key, serialized, { ex: ttlSeconds });
+    memoryCache.set(key, { value: data, expiry: Date.now() + (ttlSeconds * 1000) });
+  } catch (err) {
+    logger.warn({ err, key }, 'KV set failed, falling back to memory');
+    memoryCache.set(key, { value: data, expiry: Date.now() + (ttlSeconds * 1000) });
   }
-
-  if (cacheTimers.has(key)) {
-    clearTimeout(cacheTimers.get(key));
-    cacheTimers.delete(key);
-  }
-
-  memoryCache.set(key, data);
-
-  const timer = setTimeout(() => {
-    memoryCache.delete(key);
-    cacheTimers.delete(key);
-  }, ttlSeconds * 1000);
-
-  cacheTimers.set(key, timer);
 }
 
 async function deleteCache(key) {
-  if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
-    try {
-      await kv.del(key);
-      return;
-    } catch (err) {
-      logger.warn({ err, key }, 'Vercel KV del failed, falling back to memory');
-    }
-  }
-  memoryCache.delete(key);
-  if (cacheTimers.has(key)) {
-    clearTimeout(cacheTimers.get(key));
-    cacheTimers.delete(key);
+  try {
+    await kv.del(key);
+    memoryCache.delete(key);
+  } catch (err) {
+    logger.warn({ err, key }, 'KV delete failed, deleting from memory only');
+    memoryCache.delete(key);
   }
 }
 
@@ -61,19 +70,13 @@ async function clearAllCache() {
   if (process.env.NODE_ENV === 'production') {
     throw new Error('flushdb is disabled in production');
   }
-  if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
-    try {
-      await kv.flushdb();
-      return;
-    } catch (err) {
-      logger.warn({ err }, 'Vercel KV flushdb failed');
-    }
+  try {
+    await kv.flushdb();
+    memoryCache.clear();
+  } catch (err) {
+    logger.warn({ err }, 'KV flush failed, clearing memory only');
+    memoryCache.clear();
   }
-  for (const timer of cacheTimers.values()) {
-    clearTimeout(timer);
-  }
-  memoryCache.clear();
-  cacheTimers.clear();
 }
 
 module.exports = { getCache, setCache, deleteCache, clearAllCache };
