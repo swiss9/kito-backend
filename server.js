@@ -108,7 +108,9 @@ app.get('/api/recommended', async (req, res) => {
       await kv.set('recommended_shows', JSON.stringify(DEFAULT_RECOMMENDED));
       shows = DEFAULT_RECOMMENDED;
     } else {
-      shows = JSON.parse(shows);
+      if (typeof shows === 'string') {
+        shows = JSON.parse(shows);
+      }
     }
     res.json({ items: shows });
   } catch (err) {
