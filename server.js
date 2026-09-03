@@ -5,10 +5,9 @@ const helmet = require('helmet');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
-const { kv } = require('@vercel/kv');
 const { errorHandler } = require('./middleware/errorHandler');
 const { checkTmdb, checkAnilist, checkTorrentclaw, checkKv } = require('./services/healthService');
-const { clearAllCache, deleteCache } = require('./services/cacheService');
+const { clearAllCache, deleteCache, getCache, setCache } = require('./services/cacheService');
 const logger = require('./services/logger');
 
 const app = express();
@@ -103,14 +102,10 @@ const DEFAULT_RECOMMENDED = [
 
 app.get('/api/recommended', async (req, res) => {
   try {
-    let shows = await kv.get('recommended_shows');
+    let shows = await getCache('recommended_shows');
     if (!shows) {
-      await kv.set('recommended_shows', JSON.stringify(DEFAULT_RECOMMENDED));
+      await setCache('recommended_shows', DEFAULT_RECOMMENDED, 86400); // 24h TTL
       shows = DEFAULT_RECOMMENDED;
-    } else {
-      if (typeof shows === 'string') {
-        shows = JSON.parse(shows);
-      }
     }
     res.json({ items: shows });
   } catch (err) {
