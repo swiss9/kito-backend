@@ -9,7 +9,7 @@ function safeParse(value) {
     try {
       return JSON.parse(value);
     } catch (_) {
-      return value;
+      return null;
     }
   }
   return value;
