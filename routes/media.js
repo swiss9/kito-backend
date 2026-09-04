@@ -11,6 +11,13 @@ const { fetchAniList, searchAnilistByTitle, fetchTmdb, searchJikan, normalizeAni
 const { searchReleasesWithFallback } = require('../services/torrentService');
 const logger = require('../services/logger');
 
+const TOKUSATSU_KEYWORD_ID = '317204';
+const TOKUSATSU_FRANCHISES = [
+  'kamen rider', 'ultraman', 'super sentai', 'garo', 'godzilla',
+  'mothra', 'zone fighter', 'gridman', 'ssss.gridman', 'ssss.dynazenon',
+  'goranger', 'battle fever j'
+];
+
 function getCategory(id) { return categoryConfig[id] || null; }
 
 const releasesSchema = Joi.object({
@@ -101,6 +108,19 @@ function pickBestRelease(releases) {
   return sorted[0];
 }
 
+async function checkTokusatsuKeyword(tmdbId, mediaType) {
+  if (!process.env.TMDB_API_KEY) return false;
+  const endpoint = `${mediaType}/${tmdbId}/keywords`;
+  try {
+    const data = await fetchTmdb(endpoint);
+    const keywords = data.keywords || data.results || [];
+    return keywords.some(k => k.id === parseInt(TOKUSATSU_KEYWORD_ID));
+  } catch (err) {
+    logger.warn({ err, tmdbId, mediaType }, 'Failed to check tokusatsu keyword');
+    return false;
+  }
+}
+
 async function getMediaObject(mediaId, categoryId, title, logger) {
   const provider = mediaId.startsWith('anilist') ? 'anilist' :
                    mediaId.startsWith('jikan') ? 'jikan' : 'tmdb';
@@ -143,7 +163,9 @@ async function getMediaObject(mediaId, categoryId, title, logger) {
           const tmdbRes = await fetchTmdb(`find/${providerId}`, { external_source: 'tvdb_id' });
           if (tmdbRes.length) {
             const tmdbItem = tmdbRes[0];
-            const tokusatsuCategory = 'tokusatsu';
+            const tmdbType = tmdbItem.media_type || 'tv';
+            const isTokusatsu = await checkTokusatsuKeyword(tmdbItem.id, tmdbType);
+            const tokusatsuCategory = isTokusatsu ? 'tokusatsu' : categoryId;
             const media = normalizeTmdbMedia(tmdbItem, tokusatsuCategory);
             if (media) {
               logger.info({ provider: 'tmdb', id: providerId, title: media.title }, 'TMDB fallback from AniList ID');
@@ -181,7 +203,14 @@ async function getMediaObject(mediaId, categoryId, title, logger) {
       if (res.ok) {
         const data = await res.json();
         logger.info({ provider: 'tmdb', id: providerId, title: data.title || data.name }, 'TMDB media fetched');
-        return normalizeTmdbMedia(data, categoryId);
+        const isTokusatsu = await checkTokusatsuKeyword(providerId, mediaType);
+        let resolvedCategory = categoryId;
+        if (isTokusatsu && categoryId === 'anime') {
+          resolvedCategory = 'tokusatsu';
+          logger.info({ mediaId, newCategory: resolvedCategory }, 'Auto-detected tokusatsu, changed category');
+        }
+        const media = normalizeTmdbMedia(data, resolvedCategory);
+        return media;
       }
     } catch (err) {
       logger.warn({ err, provider: 'tmdb', id: providerId }, 'TMDB detail failed');
@@ -274,7 +303,9 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
           const tmdbRes = await fetchTmdb(`find/${providerId}`, { external_source: 'tvdb_id' });
           if (tmdbRes.length) {
             const tmdbItem = tmdbRes[0];
-            const tokusatsuCategory = 'tokusatsu';
+            const tmdbType = tmdbItem.media_type || 'tv';
+            const isTokusatsu = await checkTokusatsuKeyword(tmdbItem.id, tmdbType);
+            const tokusatsuCategory = isTokusatsu ? 'tokusatsu' : categoryId;
             const media = normalizeTmdbMedia(tmdbItem, tokusatsuCategory);
             if (media) {
               mediaObject = media;
@@ -426,7 +457,9 @@ router.post('/releases/batch', validate(batchReleasesSchema, 'body'), asyncHandl
               const tmdbRes = await fetchTmdb(`find/${providerId}`, { external_source: 'tvdb_id' });
               if (tmdbRes.length) {
                 const tmdbItem = tmdbRes[0];
-                const tokusatsuCategory = 'tokusatsu';
+                const tmdbType = tmdbItem.media_type || 'tv';
+                const isTokusatsu = await checkTokusatsuKeyword(tmdbItem.id, tmdbType);
+                const tokusatsuCategory = isTokusatsu ? 'tokusatsu' : item.category;
                 const media = normalizeTmdbMedia(tmdbItem, tokusatsuCategory);
                 if (media) {
                   mediaObject = media;
