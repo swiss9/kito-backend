@@ -1,8 +1,9 @@
 const { httpGet, httpPost } = require('./httpClient');
 const logger = require('./logger');
+const { getCache, setCache } = require('./cacheService');
 
 const ANILIST_API = 'https://graphql.anilist.co';
-const JIKAN_API = 'https://api.jikan.moe/v4';
+const KITSU_API = 'https://kitsu.io/api/edge';
 
 async function fetchAniList(query, variables) {
   try {
@@ -58,17 +59,58 @@ async function fetchTmdb(endpoint, params = {}) {
   return data.results || data;
 }
 
-async function searchJikan(query) {
-  const url = `${JIKAN_API}/anime?q=${encodeURIComponent(query)}&limit=10`;
+async function searchKitsu(query) {
+  const cacheKey = `kitsu_search:${query.toLowerCase().trim()}`;
+  const cached = await getCache(cacheKey);
+  if (cached) return cached;
+
   try {
-    const res = await fetch(url, { headers: { 'User-Agent': 'KITO/1.0' }, signal: AbortSignal.timeout(8000) });
+    const url = `${KITSU_API}/anime?filter[text]=${encodeURIComponent(query)}&page[limit]=20`;
+    const res = await fetch(url, { headers: { 'Accept': 'application/vnd.api+json' }, signal: AbortSignal.timeout(8000) });
     if (!res.ok) return [];
     const data = await res.json();
-    return data.data || [];
+    const items = data.data || [];
+    const normalized = items.map(item => normalizeKitsuMedia(item)).filter(Boolean);
+    await setCache(cacheKey, normalized, 43200);
+    return normalized;
   } catch (err) {
-    logger.warn({ err, query }, 'Jikan search failed');
+    logger.warn({ err, query }, 'Kitsu search failed');
     return [];
   }
+}
+
+function normalizeKitsuMedia(item) {
+  if (!item || !item.id) return null;
+  const attrs = item.attributes || {};
+  const titles = attrs.titles || {};
+  const title = attrs.canonicalTitle || titles.en || titles.en_jp || titles.ja_jp || 'Unknown';
+  const poster = attrs.posterImage?.original || attrs.posterImage?.large || '';
+  const year = attrs.startDate ? parseInt(attrs.startDate.slice(0, 4)) : null;
+  const episodeCount = attrs.episodeCount || null;
+  const status = attrs.status || 'UNKNOWN';
+  const genres = (attrs.categories || []).map(c => c.title || c.name) || [];
+  const popularity = attrs.popularityRank || 0;
+  const aliases = [titles.en_jp, titles.ja_jp, ...(attrs.abbreviatedTitles || [])].filter(Boolean);
+  const isAdult = attrs.ageRating === 'R18' || attrs.ageRating === 'R18+' || false;
+
+  return {
+    id: `kitsu:${item.id}`,
+    title,
+    aliases,
+    year,
+    poster,
+    mediaType: attrs.showType === 'movie' ? 'movie' : 'series',
+    episodeCount,
+    genres,
+    status,
+    isAdult,
+    popularity,
+    provider: 'kitsu',
+    providerId: String(item.id),
+    category: 'anime',
+    format: attrs.showType || 'UNKNOWN',
+    relations: []
+  };
 }
 
 function normalizeAniListMedia(item, category, relations = []) {
@@ -160,7 +202,8 @@ module.exports = {
   fetchAniList,
   searchAnilistByTitle,
   fetchTmdb,
-  searchJikan,
+  searchKitsu,
+  normalizeKitsuMedia,
   normalizeAniListMedia,
   normalizeJikanMedia,
   normalizeTmdbMedia,
