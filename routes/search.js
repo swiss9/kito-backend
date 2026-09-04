@@ -6,7 +6,7 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
 const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, MediaType, QUERY_CORRECTIONS } = require('../config');
-const { fetchAniList, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia, mediaToCard } = require('../services/metadataService');
+const { fetchAniList, fetchTmdb, searchKitsu, normalizeAniListMedia, normalizeKitsuMedia, normalizeTmdbMedia, mediaToCard } = require('../services/metadataService');
 const { stripSeasonInfo, normalizeTitle, escapeRegex } = require('../utils');
 const { getFranchise } = require('../services/rankingService');
 
@@ -144,7 +144,7 @@ function groupByFranchise(items) {
       id: `franchise:${base}`,
       title: cleanTitle,
       aliases,
-      subtitle: `${seasons.length} seasons${minYear ? ` Â· ${minYear}${maxYear && maxYear !== minYear ? 'â€“' + maxYear : ''}` : ''}`,
+      subtitle: `${seasons.length} seasons${minYear ? ` · ${minYear}${maxYear && maxYear !== minYear ? '–' + maxYear : ''}` : ''}`,
       category: first.category,
       mediaType: 'collection',
       year: minYear,
@@ -447,11 +447,11 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
 
       if (items.length === 0) {
         try {
-          const jikanData = await searchJikan(normalizedQuery);
-          items = jikanData.map(item => mediaToCard(normalizeJikanMedia(item, catId)));
-          logger.info({ count: items.length, provider: 'jikan' }, 'Jikan fallback results');
+          const kitsuItems = await searchKitsu(normalizedQuery);
+          items = kitsuItems.map(item => mediaToCard(item)).filter(Boolean);
+          logger.info({ count: items.length, provider: 'kitsu' }, 'Kitsu fallback results');
         } catch (err) {
-          logger.warn({ err, provider: 'jikan' }, 'Jikan search failed');
+          logger.warn({ err, provider: 'kitsu' }, 'Kitsu search failed');
         }
       }
 
@@ -491,7 +491,14 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
       allResults.push(...items);
     }
 
-    if (catId === 'tokusatsu' && process.env.TMDB_API_KEY) {
+    if (catId === 'tokusatsu') {
+      if (category === 'any' && !TOKUSATSU_FRANCHISES.some(f => normalizedQ.includes(f))) {
+        logger.info({ query: normalizedQuery }, 'Skipping tokusatsu search – query does not match any tokusatsu franchise');
+        continue;
+      }
+
+      if (!process.env.TMDB_API_KEY) continue;
+
       try {
         let tokusatsuItems = [];
         let page = 1;
