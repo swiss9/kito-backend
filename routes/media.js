@@ -131,9 +131,12 @@ async function getMediaObject(mediaId, categoryId, title, logger) {
           node: e.node
         }));
       }
-      if (rawMedia) return normalizeAniListMedia(rawMedia, categoryId, relations);
+      if (rawMedia) {
+        logger.info({ provider: 'anilist', id: providerId, title: rawMedia.title?.romaji }, 'AniList media fetched');
+        return normalizeAniListMedia(rawMedia, categoryId, relations);
+      }
     } catch (err) {
-      logger.warn({ err, mediaId }, 'AniList detail failed');
+      logger.warn({ err, provider: 'anilist', id: providerId }, 'AniList detail failed');
       if (title) return await fallbackFetchAnimeByTitle(title, categoryId, logger);
       if (process.env.TMDB_API_KEY) {
         try {
@@ -142,10 +145,13 @@ async function getMediaObject(mediaId, categoryId, title, logger) {
             const tmdbItem = tmdbRes[0];
             const tokusatsuCategory = 'tokusatsu';
             const media = normalizeTmdbMedia(tmdbItem, tokusatsuCategory);
-            if (media) return media;
+            if (media) {
+              logger.info({ provider: 'tmdb', id: providerId, title: media.title }, 'TMDB fallback from AniList ID');
+              return media;
+            }
           }
         } catch (e) {
-          logger.warn({ err: e, mediaId }, 'TMDB fallback for AniList ID failed');
+          logger.warn({ err: e, provider: 'tmdb', id: providerId }, 'TMDB fallback for AniList ID failed');
         }
       }
     }
@@ -158,10 +164,11 @@ async function getMediaObject(mediaId, categoryId, title, logger) {
       });
       if (res.ok) {
         const data = await res.json();
+        logger.info({ provider: 'jikan', id: providerId, title: data.data?.title }, 'Jikan media fetched');
         return normalizeJikanMedia(data.data, categoryId);
       }
     } catch (err) {
-      logger.warn({ err, mediaId }, 'Jikan detail failed');
+      logger.warn({ err, provider: 'jikan', id: providerId }, 'Jikan detail failed');
       if (title) return await fallbackFetchAnimeByTitle(title, categoryId, logger);
     }
   } else if (provider === 'tmdb') {
@@ -173,10 +180,11 @@ async function getMediaObject(mediaId, categoryId, title, logger) {
       const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
       if (res.ok) {
         const data = await res.json();
+        logger.info({ provider: 'tmdb', id: providerId, title: data.title || data.name }, 'TMDB media fetched');
         return normalizeTmdbMedia(data, categoryId);
       }
     } catch (err) {
-      logger.warn({ err, mediaId }, 'TMDB detail failed');
+      logger.warn({ err, provider: 'tmdb', id: providerId }, 'TMDB detail failed');
       if (title) return await fallbackFetchAnimeByTitle(title, categoryId, logger);
     }
   }
@@ -191,6 +199,8 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
   const limit = req.query.limit;
   let title = req.query.title || '';
   const force = req.query.force === true || req.query.force === 'true';
+
+  logger.info({ mediaId, categoryId, title, page, limit, force }, 'Releases request received');
 
   if (force) {
     const adminToken = req.headers['x-admin-token'];
@@ -228,6 +238,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
   if (!force) {
     const cached = await getCache(cacheKeyWithForce);
     if (cached) {
+      logger.info({ cacheKey, total: cached.releases.length }, 'Releases cache hit');
       mediaObject = cached.media;
       releases = cached.releases;
       return res.json({
@@ -280,6 +291,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
   }
 
   releases = await searchReleasesWithFallback(mediaObject, force, logger);
+  logger.info({ totalRaw: releases.length, mediaId }, 'Torrent search completed');
 
   const singleEpisodes = releases.filter(r => {
     if (r.coverageType === CoverageType.SINGLE && r.episodeStart !== null) return true;
@@ -326,6 +338,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
   const end = start + limit;
   const paginated = releases.slice(start, end);
 
+  logger.info({ total: releases.length, page, limit, best: !!best }, 'Releases response sent');
   res.json({
     mediaId,
     category: resolvedCategory,
@@ -388,6 +401,8 @@ router.post('/releases/batch', validate(batchReleasesSchema, 'body'), asyncHandl
   const { items } = req.body;
   const CHUNK_SIZE = 5;
   const results = [];
+
+  logger.info({ itemCount: items.length }, 'Batch releases request received');
 
   const processItem = async (item) => {
     try {
