@@ -15,6 +15,7 @@ const TOKUSATSU_FRANCHISES = [
   'mothra', 'zone fighter', 'gridman', 'ssss.gridman', 'ssss.dynazenon',
   'goranger', 'battle fever j'
 ];
+const TOKUSATSU_KEYWORD_ID = '317204';
 
 function normalizeSearchQuery(raw) {
   const trimmed = raw.trim();
@@ -201,6 +202,19 @@ async function fetchTmdbSearchWithRetry(url, retries = 3) {
     }
   }
   throw lastError || new Error('TMDB request failed');
+}
+
+async function fetchTmdbDiscoverWithKeyword(keywordId, page = 1) {
+  const baseUrl = 'https://api.themoviedb.org/3/discover/tv';
+  const url = new URL(baseUrl);
+  url.searchParams.set('api_key', process.env.TMDB_API_KEY);
+  url.searchParams.set('with_keywords', keywordId);
+  url.searchParams.set('language', 'en-US');
+  url.searchParams.set('page', page);
+  const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.results || [];
 }
 
 async function fetchAniListWithRetry(query, variables, retries = 3) {
@@ -507,42 +521,37 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
 
     if (catId === 'tokusatsu' && process.env.TMDB_API_KEY) {
       try {
-        const mediaTypes = ['tv', 'movie'];
         let tokusatsuItems = [];
-        for (const type of mediaTypes) {
-          const url = new URL(`https://api.themoviedb.org/3/search/${type}`);
-          url.searchParams.set('api_key', process.env.TMDB_API_KEY);
-          url.searchParams.set('language', 'en-US');
-          url.searchParams.set('query', normalizedQuery);
-          url.searchParams.set('page', 1);
+        let page = 1;
+        const maxPages = 2;
+        while (page <= maxPages) {
+          const results = await fetchTmdbDiscoverWithKeyword(TOKUSATSU_KEYWORD_ID, page);
+          if (!results.length) break;
+          for (const item of results) {
+            if (item.original_language !== 'ja') continue;
+            if (!item.origin_country || !item.origin_country.includes('JP')) continue;
 
-          try {
-            const data = await fetchTmdbSearchWithRetry(url.toString());
-            const results = data.results || [];
-            for (const item of results) {
-              if (item.original_language !== 'ja') continue;
-              if (!item.origin_country || !item.origin_country.includes('JP')) continue;
-
-              const genres = item.genre_ids || [];
-              const hasTokusatsuGenre = genres.some(g => [28, 12, 10759].includes(g));
-              const titleLower = (item.title || '').toLowerCase();
-              const originalTitleLower = (item.original_title || '').toLowerCase();
-              const overviewLower = (item.overview || '').toLowerCase();
-
-              const isTokusatsuByGenre = hasTokusatsuGenre;
-              const isTokusatsuByFranchise = TOKUSATSU_FRANCHISES.some(f => 
-                titleLower.includes(f) || originalTitleLower.includes(f) || overviewLower.includes(f)
-              );
-
-              if (!isTokusatsuByGenre && !isTokusatsuByFranchise) continue;
-
-              const mapped = mediaToCard(normalizeTmdbMedia(item, catId));
-              if (mapped) tokusatsuItems.push(mapped);
-            }
-          } catch (err) {
-            logger.warn({ err, type, provider: 'tmdb' }, `TMDB search ${type} failed`);
+            const mapped = mediaToCard(normalizeTmdbMedia(item, catId));
+            if (mapped) tokusatsuItems.push(mapped);
           }
+          page++;
         }
+
+        if (tokusatsuItems.length === 0) {
+          const searchResults = await fetchTmdb('search/tv', { query: normalizedQuery, page: 1 });
+          const filtered = searchResults.filter(item =>
+            item.original_language === 'ja' &&
+            item.origin_country?.includes('JP') &&
+            TOKUSATSU_FRANCHISES.some(f =>
+              (item.title || '').toLowerCase().includes(f) ||
+              (item.original_title || '').toLowerCase().includes(f) ||
+              (item.overview || '').toLowerCase().includes(f)
+            )
+          );
+          const mapped = filtered.map(item => mediaToCard(normalizeTmdbMedia(item, catId))).filter(Boolean);
+          tokusatsuItems = mapped;
+        }
+
         if (tokusatsuItems.length > 0) {
           logger.info({ count: tokusatsuItems.length, provider: 'tmdb', category: catId }, 'Search results found for tokusatsu category');
         }
@@ -682,7 +691,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   if (!force) {
     let ttlSeconds;
     if (unique.length === 0) {
-      ttlSeconds = 3600;
+      ttlSeconds = 300;
     } else if (unique.length < 3) {
       ttlSeconds = 7200;
     } else {
