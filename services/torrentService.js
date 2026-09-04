@@ -116,15 +116,12 @@ async function searchTorrentClaw(title) {
   try {
     const res = await httpGet(url);
     const data = await res.json();
-    let results = [];
-    if (data.results && Array.isArray(data.results)) {
-      results = data.results;
-    } else if (Array.isArray(data)) {
-      results = data;
-    } else {
-      results = [];
+    let rawResults = [];
+    if (data && typeof data === 'object') {
+      if (Array.isArray(data.results)) rawResults = data.results;
+      else if (Array.isArray(data)) rawResults = data;
     }
-    const mapped = results.map(t => ({
+    const mapped = rawResults.map(t => ({
       name: t.name || t.title || 'Unknown',
       magnet: t.magnet || t.magnetLink || '',
       size: t.size || '',
@@ -241,15 +238,12 @@ async function searchAnimeGarden(title) {
   try {
     const res = await httpGet(url);
     const data = await res.json();
-    let results = [];
-    if (data.results && Array.isArray(data.results)) {
-      results = data.results;
-    } else if (Array.isArray(data)) {
-      results = data;
-    } else {
-      results = [];
+    let rawResults = [];
+    if (data && typeof data === 'object') {
+      if (Array.isArray(data.results)) rawResults = data.results;
+      else if (Array.isArray(data)) rawResults = data;
     }
-    const mapped = results.map(r => ({
+    const mapped = rawResults.map(r => ({
       name: r.title || r.name || 'Unknown',
       magnet: r.magnet || '',
       size: r.size || '',
