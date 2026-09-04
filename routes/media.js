@@ -108,19 +108,6 @@ function pickBestRelease(releases) {
   return sorted[0];
 }
 
-async function checkTokusatsuKeyword(tmdbId, mediaType) {
-  if (!process.env.TMDB_API_KEY) return false;
-  const endpoint = `${mediaType}/${tmdbId}/keywords`;
-  try {
-    const data = await fetchTmdb(endpoint);
-    const keywords = data.keywords || data.results || [];
-    return keywords.some(k => k.id === parseInt(TOKUSATSU_KEYWORD_ID));
-  } catch (err) {
-    logger.warn({ err, tmdbId, mediaType }, 'Failed to check tokusatsu keyword');
-    return false;
-  }
-}
-
 async function getMediaObject(mediaId, categoryId, title, logger) {
   const provider = mediaId.startsWith('anilist') ? 'anilist' :
                    mediaId.startsWith('jikan') ? 'jikan' : 'tmdb';
@@ -198,26 +185,52 @@ async function getMediaObject(mediaId, categoryId, title, logger) {
     try {
       const config = getCategory(categoryId);
       const mediaType = config.mediaType === MediaType.MOVIE ? 'movie' : 'tv';
-      const url = `https://api.themoviedb.org/3/${mediaType}/${providerId}?api_key=${process.env.TMDB_API_KEY}&language=en-US`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-      if (res.ok) {
-        const data = await res.json();
-        logger.info({ provider: 'tmdb', id: providerId, title: data.title || data.name }, 'TMDB media fetched');
-        const isTokusatsu = await checkTokusatsuKeyword(providerId, mediaType);
-        let resolvedCategory = categoryId;
-        if (isTokusatsu && categoryId === 'anime') {
-          resolvedCategory = 'tokusatsu';
-          logger.info({ mediaId, newCategory: resolvedCategory }, 'Auto-detected tokusatsu, changed category');
-        }
-        const media = normalizeTmdbMedia(data, resolvedCategory);
-        return media;
+      const detailUrl = `https://api.themoviedb.org/3/${mediaType}/${providerId}?api_key=${process.env.TMDB_API_KEY}&language=en-US`;
+      const keywordUrl = `https://api.themoviedb.org/3/${mediaType}/${providerId}/keywords?api_key=${process.env.TMDB_API_KEY}`;
+      const [detailRes, keywordRes] = await Promise.all([
+        fetch(detailUrl, { signal: AbortSignal.timeout(8000) }),
+        fetch(keywordUrl, { signal: AbortSignal.timeout(8000) })
+      ]);
+      if (!detailRes.ok) throw new Error(`TMDB detail HTTP ${detailRes.status}`);
+      const data = await detailRes.json();
+      let keywordData = {};
+      let isTokusatsu = false;
+      if (keywordRes.ok) {
+        keywordData = await keywordRes.json();
+        const keywords = keywordData.keywords || keywordData.results || [];
+        isTokusatsu = keywords.some(k => k.id === parseInt(TOKUSATSU_KEYWORD_ID));
       }
+      const cacheKey = `tokusatsu_keyword:${providerId}:${mediaType}`;
+      await setCache(cacheKey, isTokusatsu, 604800);
+      let resolvedCategory = categoryId;
+      if (isTokusatsu && categoryId === 'anime') {
+        resolvedCategory = 'tokusatsu';
+        logger.info({ mediaId, newCategory: resolvedCategory }, 'Auto-detected tokusatsu, changed category');
+      }
+      const media = normalizeTmdbMedia(data, resolvedCategory);
+      return media;
     } catch (err) {
       logger.warn({ err, provider: 'tmdb', id: providerId }, 'TMDB detail failed');
       if (title) return await fallbackFetchAnimeByTitle(title, categoryId, logger);
     }
   }
   return null;
+}
+
+async function checkTokusatsuKeyword(tmdbId, mediaType) {
+  const cacheKey = `tokusatsu_keyword:${tmdbId}:${mediaType}`;
+  const cached = await getCache(cacheKey);
+  if (cached !== null) return cached;
+  try {
+    const data = await fetchTmdb(`${mediaType}/${tmdbId}/keywords`);
+    const keywords = data.keywords || data.results || [];
+    const isTokusatsu = keywords.some(k => k.id === parseInt(TOKUSATSU_KEYWORD_ID));
+    await setCache(cacheKey, isTokusatsu, 604800);
+    return isTokusatsu;
+  } catch (err) {
+    logger.warn({ err, tmdbId, mediaType }, 'Failed to check tokusatsu keyword');
+    return false;
+  }
 }
 
 router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (req, res) => {
