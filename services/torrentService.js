@@ -7,6 +7,11 @@ const { httpGet } = require('./httpClient');
 const rootLogger = require('./logger');
 
 const STOP_WORDS_QUERY = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'with', 'no', 'na']);
+const TOKUSATSU_FRANCHISES = [
+  'kamen rider', 'ultraman', 'super sentai', 'garo', 'godzilla',
+  'mothra', 'zone fighter', 'gridman', 'ssss.gridman', 'ssss.dynazenon',
+  'goranger', 'battle fever j'
+];
 
 function generateQueryTiers(media, logger) {
   const log = logger || rootLogger;
@@ -336,7 +341,24 @@ async function searchAnimeReleases(media, force = false, logger) {
 
   const sourceList = ['nyaa_rss'];
   const searchFnMap = { nyaa_rss: nyaaSearch };
-  return searchWithAggregation(media, sourceList, queryTiers, searchFnMap, force, log);
+
+  let results = await searchWithAggregation(media, sourceList, queryTiers, searchFnMap, force, log);
+
+  if (media.category === 'anime') {
+    const titleLower = media.title.toLowerCase();
+    const isTokusatsuFranchise = TOKUSATSU_FRANCHISES.some(f => titleLower.includes(f));
+    if (isTokusatsuFranchise) {
+      log.info({ title: media.title }, 'Anime-tagged media matches tokusatsu franchise, also searching tokusatsu category');
+      const tokusatsuMedia = { ...media, category: 'tokusatsu' };
+      const tokusatsuTiers = generateQueryTiers(tokusatsuMedia, log);
+      const tokusatsuResults = await searchWithAggregation(tokusatsuMedia, sourceList, tokusatsuTiers, searchFnMap, force, log);
+      if (tokusatsuResults.length) {
+        results = [...results, ...tokusatsuResults];
+      }
+    }
+  }
+
+  return results;
 }
 
 async function searchReleases(media, force = false) {
