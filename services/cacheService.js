@@ -36,10 +36,13 @@ async function getCache(key) {
     const kvValue = await kv.get(key);
     if (kvValue !== null && kvValue !== undefined) {
       value = safeParse(kvValue);
-      if (value !== null) return value;
+      if (value !== null) {
+        logger.debug({ key, source: 'vercel-kv' }, 'Cache hit');
+        return value;
+      }
     }
   } catch (err) {
-    logger.warn({ err, key }, 'KV get failed');
+    logger.warn({ err, key, source: 'vercel-kv' }, 'Cache get failed');
   }
 
   if (upstash) {
@@ -48,19 +51,19 @@ async function getCache(key) {
       if (upstashValue !== null && upstashValue !== undefined) {
         value = safeParse(upstashValue);
         if (value !== null) {
-          logger.debug({ key }, 'Upstash cache hit');
+          logger.debug({ key, source: 'upstash' }, 'Cache hit');
           return value;
         }
       }
     } catch (err) {
-      logger.warn({ err, key }, 'Upstash get failed');
+      logger.warn({ err, key, source: 'upstash' }, 'Cache get failed');
     }
   }
 
   if (memoryCache.has(key)) {
     const entry = memoryCache.get(key);
     if (entry.expiry > Date.now()) {
-      logger.debug({ key }, 'Memory cache hit');
+      logger.debug({ key, source: 'memory' }, 'Cache hit');
       return entry.value;
     }
     memoryCache.delete(key);
@@ -74,47 +77,47 @@ async function setCache(key, data, ttlSeconds = 3600) {
 
   try {
     await kv.set(key, serialized, { ex: ttlSeconds });
-    logger.debug({ key, ttlSeconds }, 'KV cache set');
+    logger.debug({ key, ttlSeconds, source: 'vercel-kv' }, 'Cache set');
   } catch (err) {
-    logger.warn({ err, key }, 'KV set failed');
+    logger.warn({ err, key, source: 'vercel-kv' }, 'Cache set failed');
   }
 
   if (upstash) {
     try {
       await upstash.set(key, serialized, { ex: ttlSeconds });
-      logger.debug({ key, ttlSeconds }, 'Upstash cache set');
+      logger.debug({ key, ttlSeconds, source: 'upstash' }, 'Cache set');
     } catch (err) {
-      logger.warn({ err, key }, 'Upstash set failed');
+      logger.warn({ err, key, source: 'upstash' }, 'Cache set failed');
     }
   }
 
   try {
     memoryCache.set(key, { value: data, expiry: Date.now() + (ttlSeconds * 1000) });
-    logger.debug({ key, ttlSeconds }, 'Memory cache set');
+    logger.debug({ key, ttlSeconds, source: 'memory' }, 'Cache set');
   } catch (err) {
-    logger.warn({ err, key }, 'Memory set failed');
+    logger.warn({ err, key, source: 'memory' }, 'Cache set failed');
   }
 }
 
 async function deleteCache(key) {
   try {
     await kv.del(key);
-    logger.debug({ key }, 'KV delete');
+    logger.debug({ key, source: 'vercel-kv' }, 'Cache delete');
   } catch (err) {
-    logger.warn({ err, key }, 'KV delete failed');
+    logger.warn({ err, key, source: 'vercel-kv' }, 'Cache delete failed');
   }
 
   if (upstash) {
     try {
       await upstash.del(key);
-      logger.debug({ key }, 'Upstash delete');
+      logger.debug({ key, source: 'upstash' }, 'Cache delete');
     } catch (err) {
-      logger.warn({ err, key }, 'Upstash delete failed');
+      logger.warn({ err, key, source: 'upstash' }, 'Cache delete failed');
     }
   }
 
   memoryCache.delete(key);
-  logger.debug({ key }, 'Memory delete');
+  logger.debug({ key, source: 'memory' }, 'Cache delete');
 }
 
 async function clearAllCache() {
@@ -124,7 +127,7 @@ async function clearAllCache() {
 
   try {
     await kv.flushdb();
-    logger.info('KV flushdb');
+    logger.info('KV flushdb completed');
   } catch (err) {
     logger.warn({ err }, 'KV flushdb failed');
   }
@@ -132,7 +135,7 @@ async function clearAllCache() {
   if (upstash) {
     try {
       await upstash.flushdb();
-      logger.info('Upstash flushdb');
+      logger.info('Upstash flushdb completed');
     } catch (err) {
       logger.warn({ err }, 'Upstash flushdb failed');
     }
