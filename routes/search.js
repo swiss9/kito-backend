@@ -422,6 +422,10 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
           `;
           const variables = { search: normalizedQuery, type: 'ANIME', page: pageNum, perPage: perPageAni };
           const data = await fetchAniListWithRetry(query, variables);
+          if (!data || !data.Page) {
+            logger.warn({ pageNum, provider: 'anilist' }, 'AniList returned null or missing Page');
+            break;
+          }
           const rawItems = data.Page.media || [];
           if (!rawItems.length) break;
           const mapped = rawItems
