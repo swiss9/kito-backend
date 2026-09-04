@@ -111,10 +111,17 @@ async function searchTorrentClaw(title) {
   const cacheKey = `torrentclaw:${url}`;
 
   const cached = await getCache(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    rootLogger.debug(`[torrentclaw] cache HIT for "${title}" -> ${cached.length} results`);
+    return cached;
+  }
 
   try {
     const res = await httpGet(url);
+    if (res.status === 404) {
+      rootLogger.warn(`[torrentclaw] 404 for "${title}" â€“ skipping retries`);
+      return [];
+    }
     const data = await res.json();
     let rawResults = [];
     if (data && typeof data === 'object') {
@@ -361,30 +368,33 @@ async function searchReleasesWithFallback(media, force = false, logger = null) {
   const categoryId = media.category;
   let allRawResults = [];
 
+  log.info({ title: media.title, category: categoryId, force }, 'Starting torrent search');
+
   const nyaaResults = await searchAnimeReleases(media, force, log);
+  log.info({ source: 'nyaa', count: nyaaResults.length }, 'Nyaa search completed');
   allRawResults = allRawResults.concat(nyaaResults);
 
   if (nyaaResults.length < 3) {
+    log.warn({ source: 'nyaa', count: nyaaResults.length }, 'Nyaa returned few results, falling back to AnimeGarden and TorrentClaw');
     try {
       let gardenRaw = [];
       let clawRaw = [];
-      if (categoryId === 'anime') {
-        gardenRaw = await searchAnimeGarden(media.title);
-        clawRaw = await searchTorrentClaw(media.title);
-      } else if (categoryId === 'tokusatsu') {
+      if (categoryId === 'anime' || categoryId === 'tokusatsu') {
         gardenRaw = await searchAnimeGarden(media.title);
         clawRaw = await searchTorrentClaw(media.title);
       }
       const gardenProcessed = gardenRaw.map(r => processRelease(r, media)).filter(r => r !== null);
       const clawProcessed = clawRaw.map(r => processRelease(r, media)).filter(r => r !== null);
+      log.info({ source: 'animegarden', count: gardenProcessed.length }, 'AnimeGarden fallback completed');
+      log.info({ source: 'torrentclaw', count: clawProcessed.length }, 'TorrentClaw fallback completed');
       allRawResults = allRawResults.concat(gardenProcessed, clawProcessed);
     } catch (err) {
-      log.warn(`Fallback sources failed: ${err.message}`);
+      log.warn({ err }, 'Fallback sources failed');
     }
   }
 
   const merged = mergeReleases(allRawResults, []);
-  log.debug(`[final] "${media.title}" -> total unique releases: ${merged.length}`);
+  log.info({ title: media.title, total: merged.length }, 'Torrent search finalised');
   return merged;
 }
 
