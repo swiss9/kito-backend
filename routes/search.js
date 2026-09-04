@@ -143,7 +143,7 @@ function groupByFranchise(items) {
       id: `franchise:${base}`,
       title: cleanTitle,
       aliases,
-      subtitle: `${seasons.length} seasons${minYear ? ` · ${minYear}${maxYear && maxYear !== minYear ? '–' + maxYear : ''}` : ''}`,
+      subtitle: `${seasons.length} seasons${minYear ? ` Â· ${minYear}${maxYear && maxYear !== minYear ? 'â€“' + maxYear : ''}` : ''}`,
       category: first.category,
       mediaType: 'collection',
       year: minYear,
@@ -339,6 +339,9 @@ function deduplicateSearchResults(items) {
 
 router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, res) => {
   const { q, category, page, perPage, group, force } = req.query;
+  const { logger } = req;
+
+  logger.info({ query: q, category, page, perPage, group, force }, 'Search request received');
 
   if (force === true || force === 'true') {
     const adminToken = req.headers['x-admin-token'];
@@ -360,6 +363,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   if (!force) {
     const cached = await getCache(cacheKey);
     if (cached) {
+      logger.info({ cacheKey, total: cached.total }, 'Search cache hit');
       return res.json(cached);
     }
   }
@@ -418,7 +422,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
           if (!data.Page.pageInfo.hasNextPage) break;
           pageNum++;
         } catch (err) {
-          req.logger.warn({ err }, 'AniList failed on page ' + pageNum);
+          logger.warn({ err, pageNum, provider: 'anilist' }, 'AniList search page failed');
           break;
         }
       }
@@ -427,8 +431,9 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
         try {
           const jikanData = await searchJikan(normalizedQuery);
           items = jikanData.map(item => mediaToCard(normalizeJikanMedia(item, catId)));
+          logger.info({ count: items.length, provider: 'jikan' }, 'Jikan fallback results');
         } catch (err) {
-          req.logger.warn({ err }, 'Jikan failed');
+          logger.warn({ err, provider: 'jikan' }, 'Jikan search failed');
         }
       }
 
@@ -485,15 +490,16 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
               items = movieUniqueResults.map(item => mediaToCard(normalizeTmdbMedia(item, catId))).filter(Boolean);
             }
           }
+          logger.info({ count: items.length, provider: 'tmdb' }, 'TMDB fallback results');
         } catch (err) {
-          req.logger.warn({ err }, 'TMDB fallback failed');
+          logger.warn({ err, provider: 'tmdb' }, 'TMDB fallback failed');
         }
       }
 
       if (items.length > 0) {
-        req.logger.info({ count: items.length, provider: 'anime' }, 'Search results found for anime category');
+        logger.info({ count: items.length, provider: 'anime', category: catId }, 'Search results found for anime category');
       } else {
-        req.logger.warn({ query: normalizedQuery }, 'No results found for anime category');
+        logger.warn({ query: normalizedQuery, category: catId }, 'No results found for anime category');
       }
 
       allResults.push(...items);
@@ -534,15 +540,15 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
               if (mapped) tokusatsuItems.push(mapped);
             }
           } catch (err) {
-            req.logger.warn({ err }, `TMDB search ${type} failed`);
+            logger.warn({ err, type, provider: 'tmdb' }, `TMDB search ${type} failed`);
           }
         }
         if (tokusatsuItems.length > 0) {
-          req.logger.info({ count: tokusatsuItems.length, provider: 'tmdb' }, 'Search results found for tokusatsu category');
+          logger.info({ count: tokusatsuItems.length, provider: 'tmdb', category: catId }, 'Search results found for tokusatsu category');
         }
         allResults.push(...tokusatsuItems);
       } catch (err) {
-        req.logger.warn({ err }, 'Tokusatsu TMDB error');
+        logger.warn({ err, category: catId }, 'Tokusatsu TMDB error');
       }
     }
   }
@@ -685,6 +691,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
     await setCache(cacheKey, responseData, ttlSeconds);
   }
 
+  logger.info({ total: unique.length, returned: paginated.length, cacheKey }, 'Search response sent');
   res.json(responseData);
 }));
 
