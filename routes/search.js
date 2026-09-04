@@ -454,29 +454,13 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
       if (items.length === 0 && process.env.TMDB_API_KEY) {
         try {
           let tmdbResults = await fetchTmdb('search/tv', { query: normalizedQuery, page: 1 });
-          const tmdbFranchiseMatches = tmdbResults.filter(item =>
-            item.original_language === 'ja' &&
-            item.origin_country?.includes('JP') &&
-            TOKUSATSU_FRANCHISES.some(f =>
-              (item.title || '').toLowerCase().includes(f) ||
-              (item.original_title || '').toLowerCase().includes(f) ||
-              (item.overview || '').toLowerCase().includes(f)
-            )
-          );
           const tmdbAnimeResults = tmdbResults.filter(i =>
             i.genre_ids?.includes(16) &&
             i.original_language === 'ja' &&
             i.origin_country?.includes('JP')
           );
-          const combined = [...tmdbAnimeResults, ...tmdbFranchiseMatches];
-          const uniqueIds = new Set();
-          const uniqueResults = combined.filter(item => {
-            if (uniqueIds.has(item.id)) return false;
-            uniqueIds.add(item.id);
-            return true;
-          });
-          if (uniqueResults.length) {
-            items = uniqueResults.map(item => mediaToCard(normalizeTmdbMedia(item, catId))).filter(Boolean);
+          if (tmdbAnimeResults.length) {
+            items = tmdbAnimeResults.map(item => mediaToCard(normalizeTmdbMedia(item, catId))).filter(Boolean);
           } else {
             const movieResults = await fetchTmdb('search/movie', { query: normalizedQuery, page: 1 });
             const movieAnime = movieResults.filter(i =>
@@ -484,24 +468,8 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
               i.original_language === 'ja' &&
               i.origin_country?.includes('JP')
             );
-            const movieFranchise = movieResults.filter(i =>
-              i.original_language === 'ja' &&
-              i.origin_country?.includes('JP') &&
-              TOKUSATSU_FRANCHISES.some(f =>
-                (i.title || '').toLowerCase().includes(f) ||
-                (i.original_title || '').toLowerCase().includes(f) ||
-                (i.overview || '').toLowerCase().includes(f)
-              )
-            );
-            const movieCombined = [...movieAnime, ...movieFranchise];
-            const movieUnique = new Set();
-            const movieUniqueResults = movieCombined.filter(item => {
-              if (movieUnique.has(item.id)) return false;
-              movieUnique.add(item.id);
-              return true;
-            });
-            if (movieUniqueResults.length) {
-              items = movieUniqueResults.map(item => mediaToCard(normalizeTmdbMedia(item, catId))).filter(Boolean);
+            if (movieAnime.length) {
+              items = movieAnime.map(item => mediaToCard(normalizeTmdbMedia(item, catId))).filter(Boolean);
             }
           }
           logger.info({ count: items.length, provider: 'tmdb' }, 'TMDB fallback results');
