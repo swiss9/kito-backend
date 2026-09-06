@@ -92,19 +92,19 @@ app.delete('/api/admin/cache', adminLimiter, async (req, res) => {
 });
 
 const DEFAULT_RECOMMENDED = [
-  { id: 'anilist:30', title: 'Neon Genesis Evangelion', subtitle: '1995 · 26 eps · Action, Drama, Sci-Fi', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx30-gJXjqBtvgs9y.jpg', provider: 'anilist', providerId: '30', hasRelease: true, hasBatch: false, collection: false },
-  { id: 'anilist:12949', title: 'Kamen Rider Kuuga', subtitle: '2000 · 49 eps · Action, Adventure, Drama', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx12949-L6H1PTR4fyMT.png', provider: 'anilist', providerId: '12949', hasRelease: true, hasBatch: false, collection: false },
-  { id: 'anilist:51009', title: 'Fullmetal Alchemist: Brotherhood', subtitle: '2009 · 64 eps · Action, Adventure, Drama', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx51009-8IjrnnC8ZwYd.jpg', provider: 'anilist', providerId: '51009', hasRelease: true, hasBatch: false, collection: false },
-  { id: 'anilist:101685', title: 'Kamen Rider Build', subtitle: '2017 · 49 eps · Action, Comedy, Drama', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx101685-iw0Lm92EBMCj.jpg', provider: 'anilist', providerId: '101685', hasRelease: true, hasBatch: false, collection: false },
-  { id: 'tmdb:71925', title: 'Ultraman Tiga', subtitle: '1996 · 52 eps · Action, Adventure, Sci-Fi', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/7pCjKEWPqlB64WaVHrmWKKT0jqR.jpg', provider: 'tmdb', providerId: '71925', hasRelease: true, hasBatch: false, collection: false },
-  { id: 'anilist:23', title: 'Cowboy Bebop', subtitle: '1998 · 26 eps · Action, Adventure, Drama', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx23-WBquk23FslmQ.jpg', provider: 'anilist', providerId: '23', hasRelease: true, hasBatch: false, collection: false }
+  { id: 'anilist:30', title: 'Neon Genesis Evangelion', subtitle: '1995 Â· 26 eps Â· Action, Drama, Sci-Fi', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx30-gJXjqBtvgs9y.jpg', provider: 'anilist', providerId: '30', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'anilist:12949', title: 'Kamen Rider Kuuga', subtitle: '2000 Â· 49 eps Â· Action, Adventure, Drama', category: 'tokusatsu', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx12949-L6H1PTR4fyMT.png', provider: 'anilist', providerId: '12949', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'anilist:51009', title: 'Fullmetal Alchemist: Brotherhood', subtitle: '2009 Â· 64 eps Â· Action, Adventure, Drama', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx51009-8IjrnnC8ZwYd.jpg', provider: 'anilist', providerId: '51009', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'anilist:101685', title: 'Kamen Rider Build', subtitle: '2017 Â· 49 eps Â· Action, Comedy, Drama', category: 'tokusatsu', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx101685-iw0Lm92EBMCj.jpg', provider: 'anilist', providerId: '101685', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'tmdb:71925', title: 'Ultraman Tiga', subtitle: '1996 Â· 52 eps Â· Action, Adventure, Sci-Fi', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/7pCjKEWPqlB64WaVHrmWKKT0jqR.jpg', provider: 'tmdb', providerId: '71925', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'anilist:23', title: 'Cowboy Bebop', subtitle: '1998 Â· 26 eps Â· Action, Adventure, Drama', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx23-WBquk23FslmQ.jpg', provider: 'anilist', providerId: '23', hasRelease: true, hasBatch: false, collection: false }
 ];
 
 app.get('/api/recommended', async (req, res) => {
   try {
     let shows = await getCache('recommended_shows');
     if (!shows) {
-      await setCache('recommended_shows', DEFAULT_RECOMMENDED, 86400); // 24h TTL
+      await setCache('recommended_shows', DEFAULT_RECOMMENDED, 86400);
       shows = DEFAULT_RECOMMENDED;
     }
     res.json({ items: shows });
@@ -116,8 +116,6 @@ app.get('/api/recommended', async (req, res) => {
 
 const searchRoutes = require('./routes/search');
 const mediaRoutes = require('./routes/media');
-app.use('/api/v1', searchRoutes);
-app.use('/api/v1', mediaRoutes);
 app.use('/api', searchRoutes);
 app.use('/api', mediaRoutes);
 
@@ -138,24 +136,11 @@ app.use((req, res) => {
 
 app.use(errorHandler);
 
-const server = app.listen(process.env.PORT || 3000, () => {
-  logger.info({ port: process.env.PORT || 3000 }, 'KITO API running');
-});
-
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, closing server');
-  server.close(() => {
-    logger.info('Server closed');
-    process.exit(0);
+if (require.main === module) {
+  const port = process.env.PORT || 3000;
+  app.listen(port, () => {
+    logger.info({ port }, 'KITO API running');
   });
-});
-
-process.on('SIGINT', () => {
-  logger.info('SIGINT received, closing server');
-  server.close(() => {
-    logger.info('Server closed');
-    process.exit(0);
-  });
-});
+}
 
 module.exports = app;
