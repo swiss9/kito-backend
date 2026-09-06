@@ -19,8 +19,14 @@
     "black", "rx", "stronger", "skyrider", "super 1", "black rx",
     "outsiders", "shin", "girls", "amazons", "amazon"
   ],
+  "TOKUSATSU_FRANCHISES": [
+    "kamen rider", "ultraman", "super sentai", "garo", "godzilla",
+    "mothra", "zone fighter", "gridman", "ssss.gridman", "ssss.dynazenon",
+    "goranger", "battle fever j"
+  ],
   "ALIAS_MAP": {
     "zeztz": ["zeztz", "kamen rider zeztz"],
+    "geats": ["geats", "kamen rider geats"],
     "fourze": ["fourze", "kamen rider fourze"],
     "ooo": ["ooo", "ozu", "kamen rider ooo"],
     "555": ["555", "faiz", "kamen rider 555", "kamen rider faiz"],
@@ -44,7 +50,6 @@
     "zero-one": ["zero-one", "zeroone", "kamen rider zero-one"],
     "saber": ["saber", "kamen rider saber"],
     "revice": ["revice", "kamen rider revice"],
-    "geats": ["geats", "kamen rider geats"],
     "gotchard": ["gotchard", "kamen rider gotchard"],
     "gavv": ["gavv", "kamen rider gavv"]
   },
