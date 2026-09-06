@@ -144,7 +144,7 @@ function groupByFranchise(items) {
       id: `franchise:${base}`,
       title: cleanTitle,
       aliases,
-      subtitle: `${seasons.length} seasons${minYear ? ` · ${minYear}${maxYear && maxYear !== minYear ? '–' + maxYear : ''}` : ''}`,
+      subtitle: `${seasons.length} seasons${minYear ? ` Â· ${minYear}${maxYear && maxYear !== minYear ? 'â€“' + maxYear : ''}` : ''}`,
       category: first.category,
       mediaType: 'collection',
       year: minYear,
@@ -493,7 +493,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
 
     if (catId === 'tokusatsu') {
       if (category === 'any' && !TOKUSATSU_FRANCHISES.some(f => normalizedQ.includes(f))) {
-        logger.info({ query: normalizedQuery }, 'Skipping tokusatsu search – query does not match any tokusatsu franchise');
+        logger.info({ query: normalizedQuery }, 'Skipping tokusatsu search â€“ query does not match any tokusatsu franchise');
         continue;
       }
 
@@ -571,17 +571,6 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   });
 
   if (exactMatchItems.length > 0) {
-    const queryTokens = normalizedQueryTitle.split(/\s+/).filter(t => t.length > 1);
-    allResults = allResults.filter(item => {
-      const titles = [item.title, ...(item.aliases || [])].map(t => normalizeTitle(t));
-      return titles.some(t => {
-        const titleTokens = t.split(/\s+/).filter(w => w.length > 1);
-        const common = queryTokens.filter(w => titleTokens.includes(w));
-        const overlap = common.length / Math.max(queryTokens.length, titleTokens.length, 1);
-        return overlap >= 0.5;
-      });
-    });
-
     allResults.sort((a, b) => {
       const aExact = a.title === normalizedQueryTitle || (a.aliases || []).some(t => normalizeTitle(t) === normalizedQueryTitle);
       const bExact = b.title === normalizedQueryTitle || (b.aliases || []).some(t => normalizeTitle(t) === normalizedQueryTitle);
