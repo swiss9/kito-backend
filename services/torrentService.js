@@ -1,17 +1,19 @@
 const xml2js = require('xml2js');
-const { TORRENTCLAW_API_KEY } = require('../config');
+const { TORRENTCLAW_API_KEY, ALIAS_MAP, TOKUSATSU_FRANCHISES } = require('../config');
 const { getCache, setCache, deleteCache } = require('../services/cacheService');
 const { normalizeTitle, extractMagnetHash, stripSeasonInfo } = require('../utils');
-const { processRelease, getMediaSeason } = require('./rankingService');
+const { processRelease } = require('./rankingService');
 const { httpGet } = require('./httpClient');
 const rootLogger = require('./logger');
 
 const STOP_WORDS_QUERY = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'with', 'no', 'na']);
-const TOKUSATSU_FRANCHISES = [
-  'kamen rider', 'ultraman', 'super sentai', 'garo', 'godzilla',
-  'mothra', 'zone fighter', 'gridman', 'ssss.gridman', 'ssss.dynazenon',
-  'goranger', 'battle fever j'
-];
+
+const SPECIAL_ALIAS_MAP = {
+  'zeztz': ['zeztz', 'Zeztz', 'Kamen Rider Zeztz', 'zeztz ep', 'zeztz episode'],
+  'fourze': ['fourze', 'Fourze', 'Kamen Rider Fourze', 'fourze ep', 'fourze episode'],
+  'ooo': ['ooo', 'ozu', 'OOO', 'Ozu', 'Kamen Rider OOO', 'Kamen Rider Ozu'],
+  '555': ['555', 'faiz', 'Faiz', 'Kamen Rider 555', 'Kamen Rider Faiz']
+};
 
 function generateQueryTiers(media, logger) {
   const log = logger || rootLogger;
@@ -64,15 +66,16 @@ function generateQueryTiers(media, logger) {
     tiers.push(batchVariants);
   }
 
-  const aliasMap = {
-    'zeztz': ['zeztz', 'Zeztz', 'Kamen Rider Zeztz', 'zeztz ep', 'zeztz episode', 'Zeztz EP49', 'zeztz 49', 'Zeztz 49', 'Kamen Rider Zeztz 49'],
-    'fourze': ['fourze', 'Fourze', 'Kamen Rider Fourze', 'fourze ep', 'fourze episode'],
-    'ooo': ['ooo', 'ozu', 'OOO', 'Ozu', 'Kamen Rider OOO', 'Kamen Rider Ozu'],
-    '555': ['555', 'faiz', 'Faiz', 'Kamen Rider 555', 'Kamen Rider Faiz']
-  };
-
   const lowerTitle = media.title.toLowerCase();
-  for (const [key, aliases] of Object.entries(aliasMap)) {
+  for (const [key, aliases] of Object.entries(ALIAS_MAP)) {
+    if (lowerTitle.includes(key)) {
+      for (const alias of aliases) {
+        tiers.push([alias]);
+      }
+    }
+  }
+
+  for (const [key, aliases] of Object.entries(SPECIAL_ALIAS_MAP)) {
     if (lowerTitle.includes(key)) {
       for (const alias of aliases) {
         tiers.push([alias]);
@@ -91,7 +94,7 @@ function generateQueryTiers(media, logger) {
     }
   }
 
-  const reducedTiers = dedupedTiers.slice(0, 8);
+  const reducedTiers = dedupedTiers.slice(0, 5);
 
   log.debug(`[generateQueryTiers] Media: "${media.title}" (${media.category})`);
   log.debug(`[generateQueryTiers] Tiers (reduced to ${reducedTiers.length}):`);
@@ -157,16 +160,16 @@ const ANIME_TRACKERS = [
   'udp://exodus.desync.com:6969/announce'
 ].map(tr => `&tr=${encodeURIComponent(tr)}`).join('');
 
-async function searchNyaaRSSWithRetry(title, category = 'anime', force = false, retries = 5) {
-  const delays = [5000, 10000, 20000, 40000, 60000];
+async function searchNyaaRSSWithRetry(title, category = 'anime', force = false, retries = 8) {
+  const delays = [5000, 10000, 20000, 40000, 60000, 90000, 120000, 120000];
   let lastError = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       return await searchNyaaRSS(title, category, force);
     } catch (err) {
       lastError = err;
-      if (err.message && err.message.includes('429') && attempt < retries) {
-        const delay = delays[attempt] || 60000;
+      if (err.status === 429 && attempt < retries) {
+        const delay = delays[attempt] || 120000;
         rootLogger.warn(`[nyaa] Rate limit hit, retrying in ${delay/1000}s (attempt ${attempt+1}/${retries})`);
         await new Promise(r => setTimeout(r, delay));
         continue;
@@ -234,7 +237,7 @@ async function searchNyaaRSS(title, category = 'anime', force = false) {
       uploader: ''
     };
   });
-  await setCache(cacheKey, results, 21600);
+  await setCache(cacheKey, results, 43200);
   return results;
 }
 
@@ -275,6 +278,7 @@ async function searchAnimeGarden(title) {
 async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap, force = false, logger) {
   const log = logger || rootLogger;
   const allResults = [];
+  let rateLimited = false;
 
   for (const src of sourceList) {
     const searchFn = searchFnMap[src];
@@ -282,21 +286,30 @@ async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap,
 
     const queries = [...new Set(queryTiers.flat().filter(Boolean))];
     log.debug(`[searchWithAggregation] Source "${src}" will run ${queries.length} unique queries (force=${force})`);
-    queries.forEach((q, i) => log.debug(`  ${i + 1}. "${q}"`));
 
-    const srcResults = await Promise.allSettled(
-      queries.map(q => searchFn(q, force).catch(err => { log.warn(`Source ${src} query "${q}" failed:`, err.message); return []; }))
-    );
-    for (const result of srcResults) {
-      if (result.status === 'fulfilled') {
-        if (Array.isArray(result.value)) {
-          allResults.push(...result.value);
+    const concurrency = 2;
+    const results = [];
+    const queue = [...queries];
+    const workers = Array(concurrency).fill().map(async () => {
+      while (queue.length) {
+        const q = queue.shift();
+        try {
+          const res = await searchFn(q, force);
+          if (Array.isArray(res)) results.push(...res);
+        } catch (err) {
+          if (err.status === 429) {
+            rateLimited = true;
+          }
+          log.warn(`Source ${src} query "${q}" failed:`, err.message);
         }
+        await new Promise(r => setTimeout(r, 1000));
       }
-    }
+    });
+    await Promise.all(workers);
+    allResults.push(...results);
   }
 
-  log.debug(`[aggregate] raw results for "${media.title}": ${allResults.length}`);
+  log.debug(`[aggregate] raw results for "${media.title}": ${allResults.length} (rateLimited: ${rateLimited})`);
 
   const validated = allResults
     .map(r => processRelease(r, media))
@@ -313,7 +326,7 @@ async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap,
   }
   const deduped = Array.from(hashMap.values());
   deduped.sort((a, b) => b.score - a.score);
-  return deduped;
+  return { results: deduped, rateLimited };
 }
 
 async function searchAnimeReleases(media, force = false, logger) {
@@ -334,6 +347,9 @@ async function searchAnimeReleases(media, force = false, logger) {
       }
       return await searchNyaaRSSWithRetry(title, 'anime', forceFlag);
     } catch (err) {
+      if (err.status === 429) {
+        throw err;
+      }
       log.warn(`Nyaa search for "${title}" failed:`, err.message);
       return [];
     }
@@ -342,7 +358,9 @@ async function searchAnimeReleases(media, force = false, logger) {
   const sourceList = ['nyaa_rss'];
   const searchFnMap = { nyaa_rss: nyaaSearch };
 
-  let results = await searchWithAggregation(media, sourceList, queryTiers, searchFnMap, force, log);
+  let aggregationResult = await searchWithAggregation(media, sourceList, queryTiers, searchFnMap, force, log);
+  let results = aggregationResult.results;
+  let rateLimited = aggregationResult.rateLimited;
 
   if (media.category === 'anime') {
     const titleLower = media.title.toLowerCase();
@@ -351,24 +369,25 @@ async function searchAnimeReleases(media, force = false, logger) {
       log.info({ title: media.title }, 'Anime-tagged media matches tokusatsu franchise, also searching tokusatsu category');
       const tokusatsuMedia = { ...media, category: 'tokusatsu' };
       const tokusatsuTiers = generateQueryTiers(tokusatsuMedia, log);
-      const tokusatsuResults = await searchWithAggregation(tokusatsuMedia, sourceList, tokusatsuTiers, searchFnMap, force, log);
-      if (tokusatsuResults.length) {
-        results = [...results, ...tokusatsuResults];
+      const tokusatsuAggregation = await searchWithAggregation(tokusatsuMedia, sourceList, tokusatsuTiers, searchFnMap, force, log);
+      if (tokusatsuAggregation.results.length) {
+        results = [...results, ...tokusatsuAggregation.results];
       }
+      if (tokusatsuAggregation.rateLimited) rateLimited = true;
     }
   }
 
-  return results;
+  return { results, rateLimited };
 }
 
 async function searchReleases(media, force = false) {
   const { categoryConfig } = require('../config');
   const category = categoryConfig[media.category];
-  if (!category) return [];
+  if (!category) return { results: [], rateLimited: false };
   if (category.id === 'anime' || category.id === 'tokusatsu') {
     return searchAnimeReleases(media, force);
   }
-  return [];
+  return { results: [], rateLimited: false };
 }
 
 function mergeReleases(primary, fallback) {
@@ -389,15 +408,29 @@ async function searchReleasesWithFallback(media, force = false, logger = null) {
   const log = logger || rootLogger;
   const categoryId = media.category;
   let allRawResults = [];
+  let rateLimited = false;
+  const warnings = [];
 
   log.info({ title: media.title, category: categoryId, force }, 'Starting torrent search');
 
-  const nyaaResults = await searchAnimeReleases(media, force, log);
-  log.info({ source: 'nyaa', count: nyaaResults.length }, 'Nyaa search completed');
+  const nyaaResult = await searchAnimeReleases(media, force, log);
+  const nyaaResults = nyaaResult.results;
+  rateLimited = nyaaResult.rateLimited;
+  log.info({ source: 'nyaa', count: nyaaResults.length, rateLimited }, 'Nyaa search completed');
   allRawResults = allRawResults.concat(nyaaResults);
 
-  if (nyaaResults.length < 3) {
-    log.warn({ source: 'nyaa', count: nyaaResults.length }, 'Nyaa returned few results, falling back to AnimeGarden and TorrentClaw');
+  if (rateLimited) {
+    warnings.push('Nyaa.si is rate limited. Results may be incomplete.');
+  }
+
+  const hasCompleteRelease = nyaaResults.some(r => 
+    r.coverageType === 'complete' || 
+    (media.episodeCount === 1 && r.episodeCount === 1)
+  );
+  const shouldFallback = (nyaaResults.length === 0) || !hasCompleteRelease;
+
+  if (shouldFallback) {
+    log.info('Nyaa returned no complete release, trying fallback sources');
     try {
       let gardenRaw = [];
       let clawRaw = [];
@@ -412,12 +445,15 @@ async function searchReleasesWithFallback(media, force = false, logger = null) {
       allRawResults = allRawResults.concat(gardenProcessed, clawProcessed);
     } catch (err) {
       log.warn({ err }, 'Fallback sources failed');
+      warnings.push('Fallback sources failed.');
     }
+  } else {
+    log.info('Nyaa returned complete release, skipping fallback');
   }
 
   const merged = mergeReleases(allRawResults, []);
-  log.info({ title: media.title, total: merged.length }, 'Torrent search finalised');
-  return merged;
+  log.info({ title: media.title, total: merged.length, warnings }, 'Torrent search finalised');
+  return { releases: merged, warnings, rateLimited };
 }
 
 module.exports = {
