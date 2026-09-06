@@ -37,14 +37,34 @@ async function httpGet(url, options = {}) {
 }
 
 async function httpPost(url, body, options = {}) {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-    body: JSON.stringify(body),
-    signal: options.signal || AbortSignal.timeout(10000)
-  });
-  if (!res.ok) throw new Error(`HTTP POST ${res.status}: ${res.statusText}`);
-  return res.json();
+  const maxRetries = 2;
+  let lastError;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...options.headers },
+        body: JSON.stringify(body),
+        signal: options.signal || AbortSignal.timeout(10000)
+      });
+      if (!res.ok) {
+        const err = new Error(`HTTP POST ${res.status}: ${res.statusText}`);
+        err.status = res.status;
+        throw err;
+      }
+      return res.json();
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxRetries && err.status !== 429 && err.status !== 400) {
+        const delay = Math.min(1000 * Math.pow(2, attempt), 5000);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
 }
 
 module.exports = { httpGet, httpPost };
