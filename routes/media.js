@@ -6,17 +6,12 @@ const { validate } = require('../middleware/validate');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
 const { getCache, setCache } = require('../services/cacheService');
-const { categoryConfig, CoverageType, TRUSTED_GROUPS, MediaType } = require('../config');
+const { categoryConfig, CoverageType, TRUSTED_GROUPS, MediaType, TOKUSATSU_FRANCHISES } = require('../config');
 const { fetchAniList, searchAnilistByTitle, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia, mediaToCard } = require('../services/metadataService');
 const { searchReleasesWithFallback } = require('../services/torrentService');
 const logger = require('../services/logger');
 
 const TOKUSATSU_KEYWORD_ID = '317204';
-const TOKUSATSU_FRANCHISES = [
-  'kamen rider', 'ultraman', 'super sentai', 'garo', 'godzilla',
-  'mothra', 'zone fighter', 'gridman', 'ssss.gridman', 'ssss.dynazenon',
-  'goranger', 'battle fever j'
-];
 
 function getCategory(id) { return categoryConfig[id] || null; }
 
@@ -270,44 +265,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
     throw new ApiError(400, 'Media ID required', 'MEDIA_ID_REQUIRED');
   }
 
-  let mediaObject = null;
-  let releases = [];
-  let resolvedCategory = categoryId;
-
-  const cacheKey = `releases:${resolvedCategory}:${mediaId}`;
-  const cacheKeyWithForce = force ? `${cacheKey}:force:${Date.now()}` : `${cacheKey}:force:false`;
-
-  if (!force) {
-    const cached = await getCache(cacheKeyWithForce);
-    if (cached) {
-      logger.info({ cacheKey, total: cached.releases.length }, 'Releases cache hit');
-      mediaObject = cached.media;
-      releases = cached.releases;
-      return res.json({
-        mediaId,
-        category: resolvedCategory,
-        media: {
-          title: mediaObject.title,
-          aliases: mediaObject.aliases,
-          poster: mediaObject.poster,
-          year: mediaObject.year,
-          mediaType: mediaObject.mediaType,
-          episodeCount: mediaObject.episodeCount,
-          genres: mediaObject.genres,
-          status: mediaObject.status
-        },
-        total: releases.length,
-        page,
-        limit,
-        best: pickBestRelease(releases),
-        torrents: releases.slice((page - 1) * limit, page * limit),
-        hasMore: page * limit < releases.length,
-        lowConfidenceCount: releases.filter(r => r.confidence === 'low').length
-      });
-    }
-  }
-
-  mediaObject = await getMediaObject(mediaId, categoryId, title, logger);
+  let mediaObject = await getMediaObject(mediaId, categoryId, title, logger);
   if (!mediaObject) {
     if (mediaId.startsWith('anilist:')) {
       const providerId = mediaId.split(':')[1];
@@ -322,8 +280,8 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
             const media = normalizeTmdbMedia(tmdbItem, tokusatsuCategory);
             if (media) {
               mediaObject = media;
-              resolvedCategory = tokusatsuCategory;
-              logger.info({ mediaId, resolvedCategory }, 'Fell back to TMDB for AniList ID');
+              categoryId = tokusatsuCategory;
+              logger.info({ mediaId, resolvedCategory: categoryId }, 'Fell back to TMDB for AniList ID');
             }
           }
         } catch (e) {
@@ -334,8 +292,41 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
     if (!mediaObject) throw new ApiError(404, 'Media not found', 'MEDIA_NOT_FOUND');
   }
 
-  releases = await searchReleasesWithFallback(mediaObject, force, logger);
-  logger.info({ totalRaw: releases.length, mediaId }, 'Torrent search completed');
+  const cacheKey = `releases:${categoryId}:${mediaId}:force:${force}`;
+  if (!force) {
+    const cached = await getCache(cacheKey);
+    if (cached) {
+      logger.info({ cacheKey, total: cached.releases.length }, 'Releases cache hit');
+      return res.json({
+        mediaId,
+        category: categoryId,
+        media: {
+          title: cached.media.title,
+          aliases: cached.media.aliases,
+          poster: cached.media.poster,
+          year: cached.media.year,
+          mediaType: cached.media.mediaType,
+          episodeCount: cached.media.episodeCount,
+          genres: cached.media.genres,
+          status: cached.media.status
+        },
+        total: cached.releases.length,
+        page,
+        limit,
+        best: pickBestRelease(cached.releases),
+        torrents: cached.releases.slice((page - 1) * limit, page * limit),
+        hasMore: page * limit < cached.releases.length,
+        lowConfidenceCount: cached.releases.filter(r => r.confidence === 'low').length,
+        warnings: cached.warnings || [],
+        rateLimited: cached.rateLimited || false
+      });
+    }
+  }
+
+  const torrentResult = await searchReleasesWithFallback(mediaObject, force, logger);
+  let releases = torrentResult.releases;
+  const warnings = torrentResult.warnings;
+  const rateLimited = torrentResult.rateLimited;
 
   const singleEpisodes = releases.filter(r => {
     if (r.coverageType === CoverageType.SINGLE && r.episodeStart !== null) return true;
@@ -370,22 +361,19 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
   });
 
   if (!force) {
-    await setCache(cacheKeyWithForce, { media: mediaObject, releases }, 43200);
+    await setCache(cacheKey, { media: mediaObject, releases, warnings, rateLimited }, 43200);
   }
 
-  const high = releases.filter(r => r.confidence === 'high');
-  const med = releases.filter(r => r.confidence === 'medium');
-  const low = releases.filter(r => r.confidence === 'low');
   const best = pickBestRelease(releases);
 
   const start = (page - 1) * limit;
   const end = start + limit;
   const paginated = releases.slice(start, end);
 
-  logger.info({ total: releases.length, page, limit, best: !!best }, 'Releases response sent');
+  logger.info({ total: releases.length, page, limit, best: !!best, warnings }, 'Releases response sent');
   res.json({
     mediaId,
-    category: resolvedCategory,
+    category: categoryId,
     media: {
       title: mediaObject.title,
       aliases: mediaObject.aliases,
@@ -436,7 +424,9 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
       isTrusted: TRUSTED_GROUPS.some(g => r.releaseGroup && r.releaseGroup.toLowerCase().includes(g.toLowerCase()))
     })),
     hasMore: end < releases.length,
-    lowConfidenceCount: low.length
+    lowConfidenceCount: releases.filter(r => r.confidence === 'low').length,
+    warnings,
+    rateLimited
   });
 }));
 
@@ -486,7 +476,8 @@ router.post('/releases/batch', validate(batchReleasesSchema, 'body'), asyncHandl
         }
         if (!mediaObject) return { id: item.id, error: 'Media object not found' };
       }
-      let releases = await searchReleasesWithFallback(mediaObject, false, logger);
+      const torrentResult = await searchReleasesWithFallback(mediaObject, false, logger);
+      let releases = torrentResult.releases;
 
       const singles = releases.filter(r => {
         if (r.coverageType === CoverageType.SINGLE && r.episodeStart !== null) return true;
@@ -522,7 +513,9 @@ router.post('/releases/batch', validate(batchReleasesSchema, 'body'), asyncHandl
         id: item.id,
         title: mediaObject.title,
         releases: sorted,
-        total: sorted.length
+        total: sorted.length,
+        warnings: torrentResult.warnings,
+        rateLimited: torrentResult.rateLimited
       };
     } catch (err) {
       logger.warn({ err, item }, 'Batch release item failed');
@@ -712,7 +705,8 @@ async function callGroq(prompt, logger) {
       ],
       temperature: 0.2,
       response_format: { type: 'json_object' }
-    })
+    }),
+    signal: AbortSignal.timeout(15000)
   });
   if (!res.ok) throw new ApiError(res.status, `Groq API error: ${res.status}`, 'GROQ_API_ERROR');
   const data = await res.json();
