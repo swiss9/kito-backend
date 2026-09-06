@@ -234,7 +234,7 @@ async function searchNyaaRSS(title, category = 'anime', force = false) {
       uploader: ''
     };
   });
-  await setCache(cacheKey, results, 1800);
+  await setCache(cacheKey, results, 21600);
   return results;
 }
 
