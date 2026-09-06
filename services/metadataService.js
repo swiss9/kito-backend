@@ -4,6 +4,7 @@ const { getCache, setCache } = require('./cacheService');
 
 const ANILIST_API = 'https://graphql.anilist.co';
 const KITSU_API = 'https://kitsu.io/api/edge';
+const JIKAN_API = 'https://api.jikan.moe/v4';
 
 async function fetchAniList(query, variables) {
   try {
@@ -53,10 +54,39 @@ async function fetchTmdb(endpoint, params = {}) {
       url.searchParams.set(key, value);
     }
   }
-  const res = await fetch(url.toString(), { signal: AbortSignal.timeout(8000) });
+
+  const cacheKey = `tmdb:${url.toString()}`;
+  const cached = await getCache(cacheKey);
+  if (cached) return cached;
+
+  const res = await httpGet(url.toString());
   if (!res.ok) throw new Error(`TMDB HTTP ${res.status}`);
   const data = await res.json();
-  return data.results || data;
+  const result = data.results || data;
+  await setCache(cacheKey, result, 3600);
+  return result;
+}
+
+async function searchJikan(title) {
+  const cacheKey = `jikan_search:${title.toLowerCase().trim()}`;
+  const cached = await getCache(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const url = `${JIKAN_API}/anime?q=${encodeURIComponent(title)}&limit=10`;
+    const res = await httpGet(url, {
+      headers: { 'User-Agent': 'KITO/1.0' }
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const items = data.data || [];
+    const normalized = items.map(item => normalizeJikanMedia(item, 'anime')).filter(Boolean);
+    await setCache(cacheKey, normalized, 43200);
+    return normalized;
+  } catch (err) {
+    logger.warn({ err, title }, 'Jikan search failed');
+    return [];
+  }
 }
 
 async function searchKitsu(query) {
@@ -66,7 +96,7 @@ async function searchKitsu(query) {
 
   try {
     const url = `${KITSU_API}/anime?filter[text]=${encodeURIComponent(query)}&page[limit]=20`;
-    const res = await fetch(url, { headers: { 'Accept': 'application/vnd.api+json' }, signal: AbortSignal.timeout(8000) });
+    const res = await httpGet(url, { headers: { 'Accept': 'application/vnd.api+json' } });
     if (!res.ok) return [];
     const data = await res.json();
     const items = data.data || [];
@@ -132,6 +162,7 @@ function normalizeAniListMedia(item, category, relations = []) {
     category,
     relations,
     countryOfOrigin: item.countryOfOrigin || 'JP',
+    popularity: item.popularity || 0,
   };
 }
 
@@ -173,6 +204,7 @@ function normalizeTmdbMedia(item, category) {
     providerId: String(item.id),
     category,
     origin_country: item.origin_country?.[0] || 'JP',
+    popularity: item.popularity || 0,
   };
 }
 
@@ -195,6 +227,8 @@ function mediaToCard(media) {
     isAdult: media.isAdult,
     hasRelease: false,
     hasBatch: false,
+    popularity: media.popularity || 0,
+    countryOfOrigin: media.countryOfOrigin || media.origin_country || 'JP',
   };
 }
 
@@ -203,6 +237,7 @@ module.exports = {
   searchAnilistByTitle,
   fetchTmdb,
   searchKitsu,
+  searchJikan,
   normalizeKitsuMedia,
   normalizeAniListMedia,
   normalizeJikanMedia,
