@@ -5,16 +5,12 @@ const { validate } = require('../middleware/validate');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
 const { getCache, setCache } = require('../services/cacheService');
-const { categoryConfig, MediaType, QUERY_CORRECTIONS } = require('../config');
+const { categoryConfig, MediaType, QUERY_CORRECTIONS, TOKUSATSU_FRANCHISES } = require('../config');
 const { fetchAniList, fetchTmdb, searchKitsu, normalizeAniListMedia, normalizeKitsuMedia, normalizeTmdbMedia, mediaToCard } = require('../services/metadataService');
 const { stripSeasonInfo, normalizeTitle, escapeRegex } = require('../utils');
 const { getFranchise } = require('../services/rankingService');
+const logger = require('../services/logger');
 
-const TOKUSATSU_FRANCHISES = [
-  'kamen rider', 'ultraman', 'super sentai', 'garo', 'godzilla',
-  'mothra', 'zone fighter', 'gridman', 'ssss.gridman', 'ssss.dynazenon',
-  'goranger', 'battle fever j'
-];
 const TOKUSATSU_KEYWORD_ID = '317204';
 
 function normalizeSearchQuery(raw) {
@@ -178,31 +174,6 @@ const searchSchema = Joi.object({
   group: Joi.boolean().default(false),
   force: Joi.boolean().default(false)
 });
-
-async function fetchTmdbSearchWithRetry(url, retries = 3) {
-  let lastError;
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-      if (res.status === 429) {
-        const retryAfter = res.headers.get('Retry-After');
-        const waitMs = retryAfter ? parseInt(retryAfter) * 1000 : 1000 * attempt;
-        await new Promise(r => setTimeout(r, waitMs));
-        continue;
-      }
-      if (!res.ok) {
-        throw new Error(`TMDB HTTP ${res.status}`);
-      }
-      return await res.json();
-    } catch (err) {
-      lastError = err;
-      if (attempt < retries) {
-        await new Promise(r => setTimeout(r, 500 * attempt));
-      }
-    }
-  }
-  throw lastError || new Error('TMDB request failed');
-}
 
 async function fetchTmdbDiscoverWithKeyword(keywordId, page = 1) {
   const baseUrl = 'https://api.themoviedb.org/3/discover/tv';
