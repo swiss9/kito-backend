@@ -42,7 +42,7 @@ function getCanonicalWorkName(media) {
       const riderIndex = norm.indexOf('rider');
       if (riderIndex !== -1) {
         let rest = norm.slice(riderIndex + 5).trim();
-        rest = rest.replace(/^[\s:\-–—()]+/, '').replace(/[\s:\-–—()]+$/, '');
+        rest = rest.replace(/^[\s:\-â€“â€”()]+/, '').replace(/[\s:\-â€“â€”()]+$/, '');
         if (rest.length > 0 && !/^\d{4}$/.test(rest)) {
           return rest;
         }
@@ -208,10 +208,10 @@ function extractSeasonNumber(name) {
 function extractEpisodeRange(name) {
   const clean = name.replace(/\[.*?\]|\(.*?\)/g, ' ');
   const patterns = [
-    /(\d+)\s*[-–~]\s*(\d+)/,
-    /[Ss](\d+)[Ee](\d+)\s*[-–~]\s*[Ee]?(\d+)/,
-    /[Ee]p(?:isode)?\s*(\d+)\s*[-–~]\s*(\d+)/i,
-    /[Ee](\d+)\s*[-–~]\s*[Ee]?(\d+)/
+    /(\d+)\s*[-â€“~]\s*(\d+)/,
+    /[Ss](\d+)[Ee](\d+)\s*[-â€“~]\s*[Ee]?(\d+)/,
+    /[Ee]p(?:isode)?\s*(\d+)\s*[-â€“~]\s*(\d+)/i,
+    /[Ee](\d+)\s*[-â€“~]\s*[Ee]?(\d+)/
   ];
   for (const pat of patterns) {
     const match = clean.match(pat);
@@ -358,12 +358,12 @@ function validateRelease(parsed, media) {
     }
   }
 
-  const releaseTokens = releaseTitle.split(/\s+/);
+  const releaseTokens = releaseTitle.split(/\s+/).filter(t => t.length > 0);
   const mediaTokens = mediaTitles.flatMap(t => t.split(/\s+/)).filter(t => t.length > 1);
   const commonTokens = releaseTokens.filter(t => mediaTokens.includes(t));
-  const tokenOverlap = commonTokens.length / Math.max(releaseTokens.length, mediaTokens.length, 1);
+  const tokenOverlap = commonTokens.length / releaseTokens.length;
 
-  if (tokenOverlap < 0.5) {
+  if (releaseTokens.length === 0 || tokenOverlap < 0.5) {
     reasons.push('low_token_overlap');
     return { valid: false, confidence: 0, reasons };
   }
@@ -410,7 +410,7 @@ function validateRelease(parsed, media) {
   if (year) {
     const yearStr = String(year);
     const yearFound = wordMatch(releaseNorm, yearStr) || wordMatch(originalNormLower, yearStr);
-    const yearRange = releaseNorm.match(/(\d{4})\s*[-–]\s*(\d{4})/);
+    const yearRange = releaseNorm.match(/(\d{4})\s*[-â€“]\s*(\d{4})/);
     let rangeMatches = false;
     if (yearRange) {
       const startYear = parseInt(yearRange[1]);
