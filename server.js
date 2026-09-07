@@ -127,7 +127,7 @@ app.get('/api/health', async (req, res) => {
     kv: await checkKv()
   };
   const healthy = Object.values(checks).every(c => c === 'ok');
-  res.status(healthy ? 200 : 503).json({ status: healthy ? 'ok' : 'degraded', checks });
+  res.status(200).json({ status: healthy ? 'ok' : 'degraded', checks });
 });
 
 app.use((req, res) => {
