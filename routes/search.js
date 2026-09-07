@@ -284,10 +284,18 @@ function deduplicateSearchResults(items) {
   }
 
   const mergedItems = Array.from(merged.values());
+  const anilistItems = mergedItems.filter(item => item.provider === 'anilist');
+  const nonAnilistItems = mergedItems.filter(item => item.provider !== 'anilist');
 
-  for (const item of mergedItems) {
+  for (const item of anilistItems) {
     const franchise = getFranchise({ title: item.title });
-    if (!franchise) continue;
+    if (!franchise) {
+      const key = `anilist:${item.id}`;
+      if (!fallbackMap.has(key)) {
+        fallbackMap.set(key, item);
+      }
+      continue;
+    }
     const year = item.year || '';
     const fallbackKey = `${franchise}|${year}`;
     if (fallbackMap.has(fallbackKey)) {
@@ -319,7 +327,9 @@ function deduplicateSearchResults(items) {
     }
   }
 
-  return Array.from(fallbackMap.values());
+  const finalResults = Array.from(fallbackMap.values());
+  finalResults.push(...nonAnilistItems);
+  return finalResults;
 }
 
 router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, res) => {
