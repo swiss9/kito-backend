@@ -33,6 +33,7 @@ async function searchAnilistByTitle(title) {
         status
         genres
         isAdult
+        popularity
       }
     }
   `;
@@ -139,12 +140,22 @@ function normalizeKitsuMedia(item) {
     providerId: String(item.id),
     category: 'anime',
     format: attrs.showType || 'UNKNOWN',
-    relations: []
+    relations: [],
+    seasonNumber: null,
+    seasonEpisodeCount: null,
+    totalEpisodeCount: episodeCount,
   };
 }
 
 function normalizeAniListMedia(item, category, relations = []) {
   if (!item) return null;
+  const normalizedRelations = relations.map(r => ({
+    relationType: r.relationType,
+    node: {
+      id: r.node.id,
+      title: r.node.title?.romaji || r.node.title?.english || r.node.title?.native || 'Unknown'
+    }
+  }));
   return {
     id: `anilist:${item.id}`,
     title: item.title?.romaji || item.title?.english || item.title?.native || 'Unknown',
@@ -160,9 +171,12 @@ function normalizeAniListMedia(item, category, relations = []) {
     provider: 'anilist',
     providerId: String(item.id),
     category,
-    relations,
+    relations: normalizedRelations,
     countryOfOrigin: item.countryOfOrigin || 'JP',
     popularity: item.popularity || 0,
+    seasonNumber: null,
+    seasonEpisodeCount: null,
+    totalEpisodeCount: item.episodes || null,
   };
 }
 
@@ -182,6 +196,9 @@ function normalizeJikanMedia(item, category) {
     provider: 'jikan',
     providerId: String(item.mal_id),
     category,
+    seasonNumber: null,
+    seasonEpisodeCount: null,
+    totalEpisodeCount: item.episodes || null,
   };
 }
 
@@ -189,6 +206,7 @@ function normalizeTmdbMedia(item, category) {
   if (!item) return null;
   const title = item.title || item.name || 'Unknown';
   const mediaType = item.media_type || (item.title ? 'movie' : 'tv');
+  const totalEpisodes = mediaType === 'tv' ? item.number_of_episodes || null : null;
   return {
     id: `tmdb:${item.id}`,
     title,
@@ -196,7 +214,7 @@ function normalizeTmdbMedia(item, category) {
     year: item.release_date?.slice(0, 4) || item.first_air_date?.slice(0, 4) || null,
     poster: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : '',
     mediaType: mediaType === 'movie' ? 'movie' : 'series',
-    episodeCount: item.number_of_episodes || null,
+    episodeCount: totalEpisodes,
     genres: (item.genres || []).map(g => g.name),
     status: item.status || 'UNKNOWN',
     isAdult: item.adult || false,
@@ -205,6 +223,9 @@ function normalizeTmdbMedia(item, category) {
     category,
     origin_country: item.origin_country?.[0] || 'JP',
     popularity: item.popularity || 0,
+    seasonNumber: null,
+    seasonEpisodeCount: null,
+    totalEpisodeCount: totalEpisodes,
   };
 }
 
