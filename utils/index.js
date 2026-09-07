@@ -1,14 +1,18 @@
 function normalizeTitle(title) {
+  if (!title) return '';
   return title
-    .toLowerCase()
-    .replace(/[^\w\s]/g, ' ')
+    .normalize('NFKC')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase()
+    .replace(/[\p{P}\p{S}]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
 function stripSeasonInfo(title) {
   return normalizeTitle(title)
-    .replace(/\b(s\d+|season \d+|\d+(st|nd|rd|th) season|part \d+)\b/gi, '')
+    .replace(/\b(s\d+|season\s*\d+|\d+(st|nd|rd|th)\s*season|part\s*\d+|cour\s*\d+)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
