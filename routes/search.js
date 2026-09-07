@@ -7,8 +7,9 @@ const { ApiError } = require('../middleware/errorHandler');
 const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, MediaType, QUERY_CORRECTIONS, TOKUSATSU_FRANCHISES } = require('../config');
 const { fetchAniList, fetchTmdb, searchKitsu, normalizeAniListMedia, normalizeKitsuMedia, normalizeTmdbMedia, mediaToCard } = require('../services/metadataService');
-const { stripSeasonInfo, normalizeTitle, escapeRegex } = require('../utils');
-const { getFranchise } = require('../services/rankingService');
+const { parseQueryIntent } = require('../services/queryIntentService');
+const { rankSearchResults } = require('../services/searchRankingService');
+const { stripSeasonInfo, normalizeTitle } = require('../utils');
 const logger = require('../services/logger');
 
 const TOKUSATSU_KEYWORD_ID = '317204';
@@ -205,133 +206,6 @@ async function fetchAniListWithRetry(query, variables, retries = 3) {
   throw lastError;
 }
 
-function cleanTitleForMatch(title) {
-  if (!title) return '';
-  const titleAliases = {
-    'shin seiki evangelion': 'neon genesis evangelion',
-    'shin seiki': 'neon genesis',
-    'evangelion: death (true)2': 'neon genesis evangelion: death',
-    'evangelion: death': 'neon genesis evangelion: death',
-    'the end of evangelion': 'neon genesis evangelion: the end'
-  };
-  let lower = title.toLowerCase();
-  for (const [from, to] of Object.entries(titleAliases)) {
-    if (lower.includes(from)) lower = lower.replace(from, to);
-  }
-  const parts = lower.split(/[?!:\-([/]/);
-  let cleaned = parts[0] || lower;
-  cleaned = cleaned
-    .replace(/\([^)]*\)/g, ' ')
-    .replace(/\b(Series|TV|Movie|Film|Special|OVA|ONA|Anime|Episode|Batch|Complete|Season|Collection|Edition|Version|Remastered|Dub|Sub|BD|DVD|BluRay|WEB|DL|1080p|720p|480p|360p|4k|HD|SD|HEVC|x264|x265|HDR|10bit|8bit|Multi-Subs|Multi-Audio|Dual-Audio|Eng|Jap|JPN|ENG|Multi)[:\s]*/gi, ' ')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
-  return cleaned;
-}
-
-function tokenOverlap(str1, str2) {
-  const tokens1 = str1.split(/\s+/);
-  const tokens2 = str2.split(/\s+/);
-  if (tokens1.length === 0 || tokens2.length === 0) return 0;
-  const common = tokens1.filter(t => tokens2.includes(t)).length;
-  const total = Math.max(tokens1.length, tokens2.length);
-  return common / total;
-}
-
-function getNonFranchiseTokens(title, franchise) {
-  const cleaned = cleanTitleForMatch(title);
-  const parts = cleaned.split(/\s+/);
-  const franchiseLower = franchise.toLowerCase();
-  return parts.filter(t => t !== franchiseLower && t.length > 2);
-}
-
-function deduplicateSearchResults(items) {
-  const merged = new Map();
-  const fallbackMap = new Map();
-
-  for (const item of items) {
-    const keyTitle = cleanTitleForMatch(item.title);
-    const year = item.year || '';
-    const primaryKey = `${keyTitle}|${year}`;
-
-    if (merged.has(primaryKey)) {
-      const existing = merged.get(primaryKey);
-      if (item.provider === 'anilist') {
-        existing.provider = 'anilist';
-        existing.providerId = item.providerId;
-        if (item.poster) existing.poster = item.poster;
-        if (item.subtitle) existing.subtitle = item.subtitle;
-        if (item.episodeCount) existing.episodeCount = item.episodeCount;
-        if (item.genres && item.genres.length > existing.genres.length) existing.genres = item.genres;
-        if (item.popularity && item.popularity > existing.popularity) existing.popularity = item.popularity;
-        if (item.aliases) existing.aliases = [...new Set([...existing.aliases, ...item.aliases])];
-        if (!existing.category && item.category) existing.category = item.category;
-        if (item.countryOfOrigin && !existing.countryOfOrigin) existing.countryOfOrigin = item.countryOfOrigin;
-      } else if (item.provider === 'tmdb' && existing.provider !== 'anilist') {
-        if (item.poster && !existing.poster) existing.poster = item.poster;
-        if (item.subtitle && !existing.subtitle) existing.subtitle = item.subtitle;
-        if (item.episodeCount && !existing.episodeCount) existing.episodeCount = item.episodeCount;
-        if (item.genres && item.genres.length > existing.genres.length) existing.genres = item.genres;
-        if (item.popularity && item.popularity > existing.popularity) existing.popularity = item.popularity;
-        if (item.aliases) existing.aliases = [...new Set([...existing.aliases, ...item.aliases])];
-        if (!existing.category && item.category) existing.category = item.category;
-        if (item.origin_country && !existing.origin_country) existing.origin_country = item.origin_country;
-      }
-    } else {
-      merged.set(primaryKey, { ...item });
-    }
-  }
-
-  const mergedItems = Array.from(merged.values());
-  const anilistItems = mergedItems.filter(item => item.provider === 'anilist');
-  const nonAnilistItems = mergedItems.filter(item => item.provider !== 'anilist');
-
-  for (const item of anilistItems) {
-    const franchise = getFranchise({ title: item.title });
-    if (!franchise) {
-      const key = `anilist:${item.id}`;
-      if (!fallbackMap.has(key)) {
-        fallbackMap.set(key, item);
-      }
-      continue;
-    }
-    const year = item.year || '';
-    const fallbackKey = `${franchise}|${year}`;
-    if (fallbackMap.has(fallbackKey)) {
-      const existing = fallbackMap.get(fallbackKey);
-      const cleanedTitle = cleanTitleForMatch(item.title);
-      const existingCleaned = cleanTitleForMatch(existing.title);
-      const overlap = tokenOverlap(cleanedTitle, existingCleaned);
-      if (overlap > 0.6) {
-        const nonFranchiseTokens1 = getNonFranchiseTokens(item.title, franchise);
-        const nonFranchiseTokens2 = getNonFranchiseTokens(existing.title, franchise);
-        const commonNonFranchise = nonFranchiseTokens1.filter(t => nonFranchiseTokens2.includes(t));
-        if (commonNonFranchise.length > 0) {
-          if (item.provider === 'anilist') {
-            existing.provider = 'anilist';
-            existing.providerId = item.providerId;
-            if (item.poster) existing.poster = item.poster;
-            if (item.subtitle) existing.subtitle = item.subtitle;
-            if (item.episodeCount) existing.episodeCount = item.episodeCount;
-            if (item.genres && item.genres.length > existing.genres.length) existing.genres = item.genres;
-            if (item.popularity && item.popularity > existing.popularity) existing.popularity = item.popularity;
-            if (item.aliases) existing.aliases = [...new Set([...existing.aliases, ...item.aliases])];
-            if (!existing.category && item.category) existing.category = item.category;
-            if (item.countryOfOrigin && !existing.countryOfOrigin) existing.countryOfOrigin = item.countryOfOrigin;
-          }
-        }
-      }
-    } else {
-      fallbackMap.set(fallbackKey, { ...item });
-    }
-  }
-
-  const finalResults = Array.from(fallbackMap.values());
-  finalResults.push(...nonAnilistItems);
-  return finalResults;
-}
-
 router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, res) => {
   const { q, category, page, perPage, group, force } = req.query;
   const { logger } = req;
@@ -346,7 +220,8 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   }
 
   const normalizedQuery = normalizeSearchQuery(q);
-  const normalizedQ = normalizedQuery.trim().toLowerCase();
+  const intent = parseQueryIntent(normalizedQuery);
+  const normalizedQ = intent.normalizedTitle || normalizedQuery.trim().toLowerCase();
 
   let cacheKey = `search:${category}:${normalizedQ}:page:${page}:perPage:${perPage}:group:${group}`;
   if (force) {
@@ -373,8 +248,8 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
     if (catId === 'anime') {
       let items = [];
       let pageNum = 1;
-      const maxPages = 3;
-      const perPageAni = 50;
+      const maxPages = 2;
+      const perPageAni = 20;
       const seenIds = new Set();
 
       while (pageNum <= maxPages) {
@@ -397,6 +272,16 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
                   isAdult
                   popularity
                   countryOfOrigin
+                  relations {
+                    edges {
+                      relationType
+                      node {
+                        id
+                        title { romaji english native }
+                        format
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -410,7 +295,17 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
           const rawItems = data.Page.media || [];
           if (!rawItems.length) break;
           const mapped = rawItems
-            .map(item => mediaToCard(normalizeAniListMedia(item, catId, [])))
+            .map(item => {
+              const relations = (item.relations?.edges || []).map(edge => ({
+                relationType: edge.relationType,
+                node: {
+                  id: edge.node.id,
+                  title: edge.node.title?.romaji || edge.node.title?.english || edge.node.title?.native || 'Unknown',
+                  format: edge.node.format
+                }
+              }));
+              return mediaToCard(normalizeAniListMedia(item, catId, relations));
+            })
             .filter(item => item && item.status !== 'NOT_YET_RELEASED' && !item.isAdult);
           for (const item of mapped) {
             if (!seenIds.has(item.id)) {
@@ -461,12 +356,6 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
         } catch (err) {
           logger.warn({ err, provider: 'tmdb' }, 'TMDB fallback failed');
         }
-      }
-
-      if (items.length > 0) {
-        logger.info({ count: items.length, provider: 'anime', category: catId }, 'Search results found for anime category');
-      } else {
-        logger.warn({ query: normalizedQuery, category: catId }, 'No results found for anime category');
       }
 
       allResults.push(...items);
@@ -534,37 +423,13 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
     return true;
   });
 
-  allResults = deduplicateSearchResults(allResults);
+  const rankedResults = rankSearchResults(intent, allResults);
 
-  const seenAnilistIds = new Set();
-  allResults = allResults.filter(item => {
-    if (item.provider === 'anilist') {
-      if (seenAnilistIds.has(item.providerId)) return false;
-      seenAnilistIds.add(item.providerId);
-    }
-    return true;
-  });
+  let unique = rankedResults;
 
-  const normalizedQueryTitle = normalizeTitle(normalizedQuery);
-  const exactMatchItems = allResults.filter(item => {
-    const titles = [item.title, ...(item.aliases || [])].map(t => normalizeTitle(t));
-    return titles.some(t => t === normalizedQueryTitle);
-  });
-
-  if (exactMatchItems.length > 0) {
-    allResults.sort((a, b) => {
-      const aExact = a.title === normalizedQueryTitle || (a.aliases || []).some(t => normalizeTitle(t) === normalizedQueryTitle);
-      const bExact = b.title === normalizedQueryTitle || (b.aliases || []).some(t => normalizeTitle(t) === normalizedQueryTitle);
-      if (aExact && !bExact) return -1;
-      if (!aExact && bExact) return 1;
-      return (b.popularity || 0) - (a.popularity || 0);
-    });
-  }
-
-  let unique = [];
   if (group) {
-    const seriesItems = allResults.filter(item => item.mediaType === MediaType.SERIES);
-    const movieItems = allResults.filter(item => item.mediaType === MediaType.MOVIE);
+    const seriesItems = unique.filter(item => item.mediaType === MediaType.SERIES);
+    const movieItems = unique.filter(item => item.mediaType === MediaType.MOVIE);
     const animeSeries = seriesItems.filter(item => item.category === 'anime');
     const otherSeries = seriesItems.filter(item => item.category !== 'anime');
 
@@ -609,18 +474,6 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
         unique = unique.filter(item => !(item.mediaType === MediaType.MOVIE && !item.collection));
       }
     }
-  } else {
-    unique = allResults;
-  }
-
-  const tokusatsuKeywords = /\b(kamen\s*rider|ultraman|super\s*sentai)\b/i;
-  if (tokusatsuKeywords.test(normalizedQuery)) {
-    unique.sort((a, b) => {
-      const aTokusatsu = a.category === 'tokusatsu' ? 1 : 0;
-      const bTokusatsu = b.category === 'tokusatsu' ? 1 : 0;
-      if (aTokusatsu !== bTokusatsu) return bTokusatsu - aTokusatsu;
-      return 0;
-    });
   }
 
   const start = (page - 1) * perPage;
