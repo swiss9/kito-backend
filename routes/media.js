@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const Joi = require('joi');
 const crypto = require('crypto');
+const { Ratelimit } = require('@upstash/ratelimit');
+const rateLimit = require('express-rate-limit');
 const { validate } = require('../middleware/validate');
 const { asyncHandler } = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
@@ -9,9 +11,49 @@ const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, CoverageType, TRUSTED_GROUPS, MediaType, TOKUSATSU_FRANCHISES } = require('../config');
 const { fetchAniList, searchAnilistByTitle, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia, mediaToCard } = require('../services/metadataService');
 const { searchReleasesWithFallback } = require('../services/torrentService');
+const { isValidAdminToken } = require('../utils');
+const redisClient = require('../services/redisClient');
 const logger = require('../services/logger');
 
 const TOKUSATSU_KEYWORD_ID = '317204';
+
+let batchRatelimit = null;
+if (redisClient) {
+  batchRatelimit = new Ratelimit({
+    redis: redisClient,
+    limiter: Ratelimit.slidingWindow(2, '1 m'),
+    prefix: 'kito_batch_ratelimit',
+  });
+}
+
+const batchLimiterMemory = rateLimit({
+  windowMs: 60 * 1000,
+  max: 2,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: { code: 'BATCH_RATE_LIMIT', message: 'Too many batch requests' } }
+});
+
+async function batchRateLimiterMiddleware(req, res, next) {
+  if (batchRatelimit) {
+    try {
+      const identifier = req.ip || 'anonymous';
+      const { success, limit, remaining, reset } = await batchRatelimit.limit(identifier);
+      res.setHeader('RateLimit-Limit', limit);
+      res.setHeader('RateLimit-Remaining', remaining);
+      res.setHeader('RateLimit-Reset', Math.ceil((reset - Date.now()) / 1000));
+      if (!success) {
+        return res.status(429).json({ error: { code: 'BATCH_RATE_LIMIT', message: 'Too many batch requests' } });
+      }
+      next();
+    } catch (err) {
+      req.logger?.warn({ err }, 'Batch rate limiter failed, falling back to memory');
+      batchLimiterMemory(req, res, next);
+    }
+  } else {
+    batchLimiterMemory(req, res, next);
+  }
+}
 
 function getCategory(id) { return categoryConfig[id] || null; }
 
@@ -29,11 +71,17 @@ const batchReleasesSchema = Joi.object({
     id: Joi.string().required(),
     category: Joi.string().valid('anime', 'tokusatsu').required(),
     title: Joi.string().allow('').optional()
-  })).min(1).max(50).required()
+  })).min(1).max(10).required()
 });
 
 const recommendationsSchema = Joi.object({
-  bookmarks: Joi.array().items(Joi.object()).optional()
+  bookmarks: Joi.array().items(Joi.object({
+    id: Joi.string().allow('').optional(),
+    mediaId: Joi.string().allow('').optional(),
+    title: Joi.string().max(200).allow('').optional(),
+    category: Joi.string().valid('anime', 'tokusatsu').optional(),
+    genres: Joi.array().items(Joi.string().max(50)).max(10).optional()
+  })).max(25).optional()
 });
 
 const aiSearchSchema = Joi.object({
@@ -103,6 +151,27 @@ function pickBestRelease(releases) {
   return sorted[0];
 }
 
+function serializeRelease(r) {
+  return {
+    name: r.name,
+    magnet: r.magnet,
+    size: r.size,
+    seeders: r.seeders,
+    leechers: r.leechers,
+    uploader: r.uploader,
+    type: r.coverageType,
+    quality: r.qualityLabel,
+    description: r.coverageType === CoverageType.COMPLETE ? 'Complete series' :
+                r.coverageType === CoverageType.PARTIAL ? `Episodes ${r.episodeStart}-${r.episodeEnd} (${r.coveragePercent}%)` :
+                r.coverageType === CoverageType.SINGLE ? `Episode ${r.episodeStart}` :
+                'Unknown coverage',
+    score: r.score,
+    confidence: r.confidence,
+    releaseGroup: r.releaseGroup,
+    isTrusted: TRUSTED_GROUPS.some(g => r.releaseGroup && r.releaseGroup.toLowerCase().includes(g.toLowerCase()))
+  };
+}
+
 async function getMediaObject(mediaId, categoryId, title, logger) {
   const provider = mediaId.startsWith('anilist') ? 'anilist' :
                    mediaId.startsWith('jikan') ? 'jikan' : 'tmdb';
@@ -140,24 +209,6 @@ async function getMediaObject(mediaId, categoryId, title, logger) {
     } catch (err) {
       logger.warn({ err, provider: 'anilist', id: providerId }, 'AniList detail failed');
       if (title) return await fallbackFetchAnimeByTitle(title, categoryId, logger);
-      if (process.env.TMDB_API_KEY) {
-        try {
-          const tmdbRes = await fetchTmdb(`find/${providerId}`, { external_source: 'tvdb_id' });
-          if (tmdbRes.length) {
-            const tmdbItem = tmdbRes[0];
-            const tmdbType = tmdbItem.media_type || 'tv';
-            const isTokusatsu = await checkTokusatsuKeyword(tmdbItem.id, tmdbType);
-            const tokusatsuCategory = isTokusatsu ? 'tokusatsu' : categoryId;
-            const media = normalizeTmdbMedia(tmdbItem, tokusatsuCategory);
-            if (media) {
-              logger.info({ provider: 'tmdb', id: providerId, title: media.title }, 'TMDB fallback from AniList ID');
-              return media;
-            }
-          }
-        } catch (e) {
-          logger.warn({ err: e, provider: 'tmdb', id: providerId }, 'TMDB fallback for AniList ID failed');
-        }
-      }
     }
   } else if (provider === 'jikan') {
     try {
@@ -239,11 +290,8 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
 
   logger.info({ mediaId, categoryId, title, page, limit, force }, 'Releases request received');
 
-  if (force) {
-    const adminToken = req.headers['x-admin-token'];
-    if (!adminToken || adminToken !== process.env.ADMIN_TOKEN) {
-      throw new ApiError(403, 'Invalid admin token', 'FORBIDDEN');
-    }
+  if (force && !isValidAdminToken(req.headers['x-admin-token'])) {
+    throw new ApiError(403, 'Invalid admin token', 'FORBIDDEN');
   }
 
   const config = getCategory(categoryId);
@@ -267,36 +315,24 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
 
   let mediaObject = await getMediaObject(mediaId, categoryId, title, logger);
   if (!mediaObject) {
-    if (mediaId.startsWith('anilist:')) {
-      const providerId = mediaId.split(':')[1];
-      if (process.env.TMDB_API_KEY) {
-        try {
-          const tmdbRes = await fetchTmdb(`find/${providerId}`, { external_source: 'tvdb_id' });
-          if (tmdbRes.length) {
-            const tmdbItem = tmdbRes[0];
-            const tmdbType = tmdbItem.media_type || 'tv';
-            const isTokusatsu = await checkTokusatsuKeyword(tmdbItem.id, tmdbType);
-            const tokusatsuCategory = isTokusatsu ? 'tokusatsu' : categoryId;
-            const media = normalizeTmdbMedia(tmdbItem, tokusatsuCategory);
-            if (media) {
-              mediaObject = media;
-              categoryId = tokusatsuCategory;
-              logger.info({ mediaId, resolvedCategory: categoryId }, 'Fell back to TMDB for AniList ID');
-            }
-          }
-        } catch (e) {
-          logger.warn({ err: e, mediaId }, 'TMDB fallback for AniList ID failed');
-        }
+    if (title) {
+      mediaObject = await fallbackFetchAnimeByTitle(title, categoryId, logger);
+      if (mediaObject) {
+        logger.info({ mediaId, resolvedCategory: categoryId }, 'Fell back to title search for media');
       }
     }
     if (!mediaObject) throw new ApiError(404, 'Media not found', 'MEDIA_NOT_FOUND');
   }
 
-  const cacheKey = `releases:${categoryId}:${mediaId}:force:${force}`;
+  const cacheKey = `releases:${categoryId}:${mediaId}`;
   if (!force) {
     const cached = await getCache(cacheKey);
     if (cached) {
       logger.info({ cacheKey, total: cached.releases.length }, 'Releases cache hit');
+      const start = (page - 1) * limit;
+      const end = start + limit;
+      const paginatedReleases = cached.releases.slice(start, end);
+      const bestRelease = cached.releases.length ? pickBestRelease(cached.releases) : null;
       return res.json({
         mediaId,
         category: categoryId,
@@ -313,9 +349,9 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
         total: cached.releases.length,
         page,
         limit,
-        best: pickBestRelease(cached.releases),
-        torrents: cached.releases.slice((page - 1) * limit, page * limit),
-        hasMore: page * limit < cached.releases.length,
+        best: bestRelease ? serializeRelease(bestRelease) : null,
+        torrents: paginatedReleases.map(serializeRelease),
+        hasMore: end < cached.releases.length,
         lowConfidenceCount: cached.releases.filter(r => r.confidence === 'low').length,
         warnings: cached.warnings || [],
         rateLimited: cached.rateLimited || false
@@ -387,42 +423,8 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
     total: releases.length,
     page,
     limit,
-    best: best ? {
-      name: best.name,
-      magnet: best.magnet,
-      size: best.size,
-      seeders: best.seeders,
-      leechers: best.leechers,
-      uploader: best.uploader,
-      type: best.coverageType,
-      quality: best.qualityLabel,
-      description: best.coverageType === CoverageType.COMPLETE ? 'Complete series' :
-                  best.coverageType === CoverageType.PARTIAL ? `Episodes ${best.episodeStart}-${best.episodeEnd} (${best.coveragePercent}%)` :
-                  best.coverageType === CoverageType.SINGLE ? `Episode ${best.episodeStart}` :
-                  'Unknown coverage',
-      score: best.score,
-      confidence: best.confidence,
-      releaseGroup: best.releaseGroup,
-      isTrusted: TRUSTED_GROUPS.some(g => best.releaseGroup && best.releaseGroup.toLowerCase().includes(g.toLowerCase()))
-    } : null,
-    torrents: paginated.map(r => ({
-      name: r.name,
-      magnet: r.magnet,
-      size: r.size,
-      seeders: r.seeders,
-      leechers: r.leechers,
-      uploader: r.uploader,
-      type: r.coverageType,
-      quality: r.qualityLabel,
-      description: r.coverageType === CoverageType.COMPLETE ? 'Complete series' :
-                  r.coverageType === CoverageType.PARTIAL ? `Episodes ${r.episodeStart}-${r.episodeEnd} (${r.coveragePercent}%)` :
-                  r.coverageType === CoverageType.SINGLE ? `Episode ${r.episodeStart}` :
-                  'Unknown coverage',
-      score: r.score,
-      confidence: r.confidence,
-      releaseGroup: r.releaseGroup,
-      isTrusted: TRUSTED_GROUPS.some(g => r.releaseGroup && r.releaseGroup.toLowerCase().includes(g.toLowerCase()))
-    })),
+    best: best ? serializeRelease(best) : null,
+    torrents: paginated.map(serializeRelease),
     hasMore: end < releases.length,
     lowConfidenceCount: releases.filter(r => r.confidence === 'low').length,
     warnings,
@@ -430,7 +432,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
   });
 }));
 
-router.post('/releases/batch', validate(batchReleasesSchema, 'body'), asyncHandler(async (req, res) => {
+router.post('/releases/batch', batchRateLimiterMiddleware, validate(batchReleasesSchema, 'body'), asyncHandler(async (req, res) => {
   const { logger } = req;
   const { items } = req.body;
   const CHUNK_SIZE = 5;
@@ -451,28 +453,10 @@ router.post('/releases/batch', validate(batchReleasesSchema, 'body'), asyncHandl
         mediaId = `anilist:${media.id}`;
         title = media.title?.romaji || media.title?.english || title;
       }
-      const mediaObject = await getMediaObject(mediaId, item.category, title, logger);
+      let mediaObject = await getMediaObject(mediaId, item.category, title, logger);
       if (!mediaObject) {
-        if (mediaId.startsWith('anilist:')) {
-          const providerId = mediaId.split(':')[1];
-          if (process.env.TMDB_API_KEY) {
-            try {
-              const tmdbRes = await fetchTmdb(`find/${providerId}`, { external_source: 'tvdb_id' });
-              if (tmdbRes.length) {
-                const tmdbItem = tmdbRes[0];
-                const tmdbType = tmdbItem.media_type || 'tv';
-                const isTokusatsu = await checkTokusatsuKeyword(tmdbItem.id, tmdbType);
-                const tokusatsuCategory = isTokusatsu ? 'tokusatsu' : item.category;
-                const media = normalizeTmdbMedia(tmdbItem, tokusatsuCategory);
-                if (media) {
-                  mediaObject = media;
-                  item.category = tokusatsuCategory;
-                }
-              }
-            } catch (e) {
-              logger.warn({ err: e, mediaId }, 'TMDB fallback for AniList ID failed');
-            }
-          }
+        if (title) {
+          mediaObject = await fallbackFetchAnimeByTitle(title, item.category, logger);
         }
         if (!mediaObject) return { id: item.id, error: 'Media object not found' };
       }
@@ -512,7 +496,7 @@ router.post('/releases/batch', validate(batchReleasesSchema, 'body'), asyncHandl
       return {
         id: item.id,
         title: mediaObject.title,
-        releases: sorted,
+        releases: sorted.map(serializeRelease),
         total: sorted.length,
         warnings: torrentResult.warnings,
         rateLimited: torrentResult.rateLimited
@@ -556,21 +540,15 @@ async function fetchRecommendationsFromGroq(bookmarks, logger) {
 Bookmarks:
 ${bookmarkInfo}
 
-Return ONLY a JSON array of AniList IDs (integers). Do not include any other text, explanation, or formatting. Example: [12345, 67890, 11111, 22222, 33333, 44444]`;
+Return ONLY JSON in this shape:
+{ "ids": [12345, 67890, 11111, 22222, 33333, 44444] }`;
 
   try {
     const response = await callGroq(prompt, logger);
     let ids = [];
-
-    if (Array.isArray(response)) {
-      ids = response.filter(id => Number.isInteger(id) && id > 0);
-    } else if (response && typeof response === 'object') {
-      const arrayVal = Object.values(response).find(v => Array.isArray(v));
-      if (arrayVal) {
-        ids = arrayVal.filter(id => Number.isInteger(id) && id > 0);
-      }
+    if (response && Array.isArray(response.ids)) {
+      ids = response.ids.filter(id => Number.isInteger(id) && id > 0);
     }
-
     return ids;
   } catch (err) {
     logger.error({ err }, 'Groq recommendation fetch failed');
@@ -704,7 +682,7 @@ async function callGroq(prompt, logger) {
   if (!res.ok) throw new ApiError(res.status, `Groq API error: ${res.status}`, 'GROQ_API_ERROR');
   const data = await res.json();
 
-  let content = data.choices[0].message.content;
+  let content = data.choices?.[0]?.message?.content || '';
   content = content.replace(/```json\s*|\s*```/g, '').trim();
 
   try {
