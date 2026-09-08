@@ -34,6 +34,19 @@ async function checkTorrentclaw() {
   }
 }
 
+async function checkNyaa() {
+  try {
+    const res = await fetch('https://nyaa.si/?page=rss&c=1_2&q=test', {
+      signal: AbortSignal.timeout(5000),
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+    if (res.status === 429) return 'rate_limited';
+    return res.ok ? 'ok' : 'error';
+  } catch {
+    return 'timeout';
+  }
+}
+
 async function checkKv() {
   try {
     await kv.set('health:ping', 'pong', { ex: 10 });
@@ -44,4 +57,4 @@ async function checkKv() {
   }
 }
 
-module.exports = { checkTmdb, checkAnilist, checkTorrentclaw, checkKv };
+module.exports = { checkTmdb, checkAnilist, checkTorrentclaw, checkNyaa, checkKv };
