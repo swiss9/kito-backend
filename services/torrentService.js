@@ -160,23 +160,21 @@ const ANIME_TRACKERS = [
   'udp://exodus.desync.com:6969/announce'
 ].map(tr => `&tr=${encodeURIComponent(tr)}`).join('');
 
-async function searchNyaaRSSWithRetry(title, category = 'anime', force = false, retries = 8) {
-  const delays = [5000, 10000, 20000, 40000, 60000, 90000, 120000, 120000];
+async function searchNyaaRSSWithRetry(title, category = 'anime', force = false, retries = 1) {
   let lastError = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       return await searchNyaaRSS(title, category, force);
     } catch (err) {
       lastError = err;
-      if (err.status === 429 && attempt < retries) {
-        const delay = delays[attempt] || 120000;
-        rootLogger.warn(`[nyaa] Rate limit hit, retrying in ${delay/1000}s (attempt ${attempt+1}/${retries})`);
-        await new Promise(r => setTimeout(r, delay));
-        continue;
+      if (err.status === 429) {
+        rootLogger.warn(`[nyaa] Rate limit hit for "${title}". Aborting retries to prevent timeout.`);
+        break;
       }
-      if (attempt === retries) throw err;
-      const delay = Math.min(1000 * Math.pow(2, attempt), 30000);
-      await new Promise(r => setTimeout(r, delay));
+      if (attempt < retries) {
+        const delay = Math.min(1000 * Math.pow(2, attempt), 2000);
+        await new Promise(r => setTimeout(r, delay));
+      }
     }
   }
   throw lastError;
@@ -200,8 +198,6 @@ async function searchNyaaRSS(title, category = 'anime', force = false) {
       return cached;
     }
   }
-
-  await new Promise(resolve => setTimeout(resolve, 1200));
 
   const urlWithBust = `${baseUrl}&_=${Date.now()}`;
   rootLogger.debug(`[nyaa] fetching fresh for "${title}" (${category})`);
@@ -285,28 +281,35 @@ async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap,
     if (!searchFn) continue;
 
     const queries = [...new Set(queryTiers.flat().filter(Boolean))];
-    log.debug(`[searchWithAggregation] Source "${src}" will run ${queries.length} unique queries (force=${force})`);
+    log.debug(`[searchWithAggregation] Source "${src}" will run up to ${queries.length} queries with early stopping`);
 
-    const concurrency = 2;
-    const results = [];
-    const queue = [...queries];
-    const workers = Array(concurrency).fill().map(async () => {
-      while (queue.length) {
-        const q = queue.shift();
-        try {
-          const res = await searchFn(q, force);
-          if (Array.isArray(res)) results.push(...res);
-        } catch (err) {
-          if (err.status === 429) {
-            rateLimited = true;
+    let validCount = 0;
+    let hasGoodSeeders = false;
+
+    for (let i = 0; i < queries.length; i++) {
+      const q = queries[i];
+      try {
+        const res = await searchFn(q, force);
+        if (Array.isArray(res)) {
+          for (const r of res) {
+            const processed = processRelease(r, media);
+            if (processed !== null) {
+              validCount++;
+              if ((r.seeders || 0) >= 10) hasGoodSeeders = true;
+            }
           }
-          log.warn(`Source ${src} query "${q}" failed:`, err.message);
+          allResults.push(...res);
         }
-        await new Promise(r => setTimeout(r, 1000));
+      } catch (err) {
+        if (err.status === 429) rateLimited = true;
+        log.warn(`Source ${src} query "${q}" failed:`, err.message);
       }
-    });
-    await Promise.all(workers);
-    allResults.push(...results);
+
+      if (validCount >= 3 && hasGoodSeeders) {
+        log.info(`[searchWithAggregation] Found good releases early. Skipping remaining ${queries.length - (i + 1)} queries.`);
+        break;
+      }
+    }
   }
 
   log.debug(`[aggregate] raw results for "${media.title}": ${allResults.length} (rateLimited: ${rateLimited})`);
@@ -423,10 +426,10 @@ async function searchReleasesWithFallback(media, force = false, logger = null) {
     warnings.push('Nyaa.si is rate limited. Results may be incomplete.');
   }
 
-  const hasCompleteRelease = nyaaResults.some(r => 
-    r.coverageType === 'complete' || 
-    (media.episodeCount === 1 && r.episodeCount === 1)
-  );
+  const isMovie = media.mediaType === 'movie' || media.episodeCount === 1;
+  const hasCompleteRelease = isMovie 
+    ? (nyaaResults.length > 0) 
+    : nyaaResults.some(r => r.coverageType === 'complete');
   const shouldFallback = (nyaaResults.length === 0) || !hasCompleteRelease;
 
   if (shouldFallback) {
