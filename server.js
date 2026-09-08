@@ -6,8 +6,9 @@ const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 const { errorHandler } = require('./middleware/errorHandler');
-const { checkTmdb, checkAnilist, checkTorrentclaw, checkKv } = require('./services/healthService');
+const { checkTmdb, checkAnilist, checkTorrentclaw, checkNyaa, checkKv } = require('./services/healthService');
 const { clearAllCache, deleteCache, getCache, setCache } = require('./services/cacheService');
+const { isValidAdminToken } = require('./utils');
 const logger = require('./services/logger');
 
 const app = express();
@@ -32,11 +33,13 @@ app.use((req, res, next) => {
 });
 
 app.use(helmet());
+
 app.use(cors({
-  origin: process.env.FRONTEND_ORIGIN || '*',
+  origin: process.env.FRONTEND_ORIGIN || 'http://localhost:3000',
   methods: ['GET', 'POST', 'DELETE'],
   allowedHeaders: ['Content-Type', 'x-admin-token']
 }));
+
 app.use(compression());
 app.use(express.json());
 
@@ -62,8 +65,8 @@ app.get('/', (req, res) => {
 });
 
 app.delete('/api/admin/cache', adminLimiter, async (req, res) => {
-  const adminToken = process.env.ADMIN_TOKEN;
-  if (!adminToken || req.headers['x-admin-token'] !== adminToken) {
+  const providedToken = req.headers['x-admin-token'];
+  if (!isValidAdminToken(providedToken)) {
     return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Invalid admin token' } });
   }
 
@@ -120,12 +123,14 @@ app.use('/api', searchRoutes);
 app.use('/api', mediaRoutes);
 
 app.get('/api/health', async (req, res) => {
-  const checks = {
-    tmdb: await checkTmdb(),
-    anilist: await checkAnilist(),
-    torrentclaw: await checkTorrentclaw(),
-    kv: await checkKv()
-  };
+  const [tmdb, anilist, torrentclaw, nyaa, kv] = await Promise.all([
+    checkTmdb(),
+    checkAnilist(),
+    checkTorrentclaw(),
+    checkNyaa(),
+    checkKv()
+  ]);
+  const checks = { tmdb, anilist, torrentclaw, nyaa, kv };
   const healthy = Object.values(checks).every(c => c === 'ok');
   res.status(200).json({ status: healthy ? 'ok' : 'degraded', checks });
 });
