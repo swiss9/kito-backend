@@ -15,8 +15,6 @@ if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) 
   }
 }
 
-const memoryCache = new Map();
-
 function safeParse(value) {
   if (value === null || value === undefined) return null;
   if (typeof value === 'string') {
@@ -60,15 +58,6 @@ async function getCache(key) {
     }
   }
 
-  if (memoryCache.has(key)) {
-    const entry = memoryCache.get(key);
-    if (entry.expiry > Date.now()) {
-      logger.debug({ key, source: 'memory' }, 'Cache hit');
-      return entry.value;
-    }
-    memoryCache.delete(key);
-  }
-
   return null;
 }
 
@@ -90,13 +79,6 @@ async function setCache(key, data, ttlSeconds = 3600) {
       logger.warn({ err, key, source: 'upstash' }, 'Cache set failed');
     }
   }
-
-  try {
-    memoryCache.set(key, { value: data, expiry: Date.now() + (ttlSeconds * 1000) });
-    logger.debug({ key, ttlSeconds, source: 'memory' }, 'Cache set');
-  } catch (err) {
-    logger.warn({ err, key, source: 'memory' }, 'Cache set failed');
-  }
 }
 
 async function deleteCache(key) {
@@ -115,9 +97,6 @@ async function deleteCache(key) {
       logger.warn({ err, key, source: 'upstash' }, 'Cache delete failed');
     }
   }
-
-  memoryCache.delete(key);
-  logger.debug({ key, source: 'memory' }, 'Cache delete');
 }
 
 async function clearAllCache() {
@@ -140,9 +119,6 @@ async function clearAllCache() {
       logger.warn({ err }, 'Upstash flushdb failed');
     }
   }
-
-  memoryCache.clear();
-  logger.info('Memory cache cleared');
 }
 
 module.exports = { getCache, setCache, deleteCache, clearAllCache };
