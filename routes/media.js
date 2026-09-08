@@ -561,23 +561,16 @@ Return ONLY a JSON array of AniList IDs (integers). Do not include any other tex
   try {
     const response = await callGroq(prompt, logger);
     let ids = [];
-    try {
-      const cleaned = response.replace(/```json\s*|\s*```/g, '').trim();
-      const parsed = JSON.parse(cleaned);
-      if (Array.isArray(parsed)) {
-        ids = parsed.filter(id => Number.isInteger(id) && id > 0);
-      }
-    } catch (_) {
-      const match = response.match(/\[[\s\d,.]+\]/);
-      if (match) {
-        try {
-          const parsed = JSON.parse(match[0]);
-          if (Array.isArray(parsed)) {
-            ids = parsed.filter(id => Number.isInteger(id) && id > 0);
-          }
-        } catch (__) {}
+
+    if (Array.isArray(response)) {
+      ids = response.filter(id => Number.isInteger(id) && id > 0);
+    } else if (response && typeof response === 'object') {
+      const arrayVal = Object.values(response).find(v => Array.isArray(v));
+      if (arrayVal) {
+        ids = arrayVal.filter(id => Number.isInteger(id) && id > 0);
       }
     }
+
     return ids;
   } catch (err) {
     logger.error({ err }, 'Groq recommendation fetch failed');
@@ -710,7 +703,19 @@ async function callGroq(prompt, logger) {
   });
   if (!res.ok) throw new ApiError(res.status, `Groq API error: ${res.status}`, 'GROQ_API_ERROR');
   const data = await res.json();
-  return JSON.parse(data.choices[0].message.content);
+
+  let content = data.choices[0].message.content;
+  content = content.replace(/```json\s*|\s*```/g, '').trim();
+
+  try {
+    return JSON.parse(content);
+  } catch (e) {
+    const match = content.match(/(\{.*\}|\[.*\])/s);
+    if (match) {
+      try { return JSON.parse(match[1]); } catch (_) {}
+    }
+    throw new Error('Invalid JSON from AI');
+  }
 }
 
 module.exports = router;
