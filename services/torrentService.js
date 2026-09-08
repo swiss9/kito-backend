@@ -1,19 +1,12 @@
-const xml2js = require('xml2js');
 const { TORRENTCLAW_API_KEY, ALIAS_MAP, TOKUSATSU_FRANCHISES } = require('../config');
 const { getCache, setCache, deleteCache } = require('../services/cacheService');
 const { normalizeTitle, extractMagnetHash, stripSeasonInfo } = require('../utils');
 const { processRelease } = require('./rankingService');
 const { httpGet } = require('./httpClient');
 const rootLogger = require('./logger');
+const { XMLParser } = require('fast-xml-parser');
 
 const STOP_WORDS_QUERY = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'with', 'no', 'na']);
-
-const SPECIAL_ALIAS_MAP = {
-  'zeztz': ['zeztz', 'Zeztz', 'Kamen Rider Zeztz', 'zeztz ep', 'zeztz episode'],
-  'fourze': ['fourze', 'Fourze', 'Kamen Rider Fourze', 'fourze ep', 'fourze episode'],
-  'ooo': ['ooo', 'ozu', 'OOO', 'Ozu', 'Kamen Rider OOO', 'Kamen Rider Ozu'],
-  '555': ['555', 'faiz', 'Faiz', 'Kamen Rider 555', 'Kamen Rider Faiz']
-};
 
 function generateQueryTiers(media, logger) {
   const log = logger || rootLogger;
@@ -75,14 +68,6 @@ function generateQueryTiers(media, logger) {
     }
   }
 
-  for (const [key, aliases] of Object.entries(SPECIAL_ALIAS_MAP)) {
-    if (lowerTitle.includes(key)) {
-      for (const alias of aliases) {
-        tiers.push([alias]);
-      }
-    }
-  }
-
   const dedupedTiers = [];
   const seen = new Set();
   for (const tier of tiers) {
@@ -125,7 +110,7 @@ async function searchTorrentClaw(title) {
   }
 
   try {
-    const res = await httpGet(url);
+    const res = await httpGet(url, { timeoutMs: 5000, maxRetries: 1 });
     if (res.status === 404) {
       rootLogger.warn(`[torrentclaw] 404 for "${title}" â€“ skipping retries`);
       return [];
@@ -160,6 +145,26 @@ const ANIME_TRACKERS = [
   'udp://exodus.desync.com:6969/announce'
 ].map(tr => `&tr=${encodeURIComponent(tr)}`).join('');
 
+function parseNyaaRSS(text) {
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    removeNSPrefix: false,
+    parseTagValue: false,
+    parseAttributeValue: false
+  });
+  const parsed = parser.parse(text);
+  const items = parsed?.rss?.channel?.item;
+  const itemArray = items ? (Array.isArray(items) ? items : [items]) : [];
+  return itemArray.map(item => ({
+    title: item.title || 'Unknown',
+    link: item.link || '',
+    infoHash: item['nyaa:infoHash'] || '',
+    size: item['nyaa:size'] || '',
+    seeders: Number(item['nyaa:seeders']) || 0,
+    leechers: Number(item['nyaa:leechers']) || 0
+  }));
+}
+
 async function searchNyaaRSSWithRetry(title, category = 'anime', force = false, retries = 1) {
   let lastError = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -168,6 +173,7 @@ async function searchNyaaRSSWithRetry(title, category = 'anime', force = false, 
     } catch (err) {
       lastError = err;
       if (err.status === 429) {
+        await setCache('nyaa_rate_limited', true, 300);
         rootLogger.warn(`[nyaa] Rate limit hit for "${title}". Aborting retries to prevent timeout.`);
         break;
       }
@@ -181,6 +187,13 @@ async function searchNyaaRSSWithRetry(title, category = 'anime', force = false, 
 }
 
 async function searchNyaaRSS(title, category = 'anime', force = false) {
+  const rateLimited = await getCache('nyaa_rate_limited');
+  if (rateLimited) {
+    const err = new Error('Nyaa rate limited');
+    err.status = 429;
+    throw err;
+  }
+
   let catParam = '1_2';
   if (category === 'tokusatsu') {
     catParam = '4_1';
@@ -202,7 +215,9 @@ async function searchNyaaRSS(title, category = 'anime', force = false) {
   const urlWithBust = `${baseUrl}&_=${Date.now()}`;
   rootLogger.debug(`[nyaa] fetching fresh for "${title}" (${category})`);
   const res = await httpGet(urlWithBust, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    timeoutMs: 5000,
+    maxRetries: 0
   });
 
   if (res.status === 429) {
@@ -212,24 +227,19 @@ async function searchNyaaRSS(title, category = 'anime', force = false) {
   }
 
   const text = await res.text();
-  const parser = new xml2js.Parser({ explicitArray: false });
-  const result = await parser.parseStringPromise(text);
-  const items = result.rss?.channel?.item;
-  const itemArray = items ? (Array.isArray(items) ? items : [items]) : [];
-  rootLogger.debug(`[nyaa] query "${title}" (${category}) -> ${itemArray.length} items`);
+  const parsedItems = parseNyaaRSS(text);
+  rootLogger.debug(`[nyaa] query "${title}" (${category}) -> ${parsedItems.length} items`);
 
-  const results = itemArray.map(item => {
-    const title = item.title || 'Unknown';
-    const infoHash = item['nyaa:infoHash'] || '';
-    const magnet = infoHash
-      ? `magnet:?xt=urn:btih:${infoHash}&dn=${encodeURIComponent(title)}${ANIME_TRACKERS}`
+  const results = parsedItems.map(item => {
+    const magnet = item.infoHash
+      ? `magnet:?xt=urn:btih:${item.infoHash}&dn=${encodeURIComponent(item.title)}${ANIME_TRACKERS}`
       : (item.link || '');
     return {
-      name: title,
+      name: item.title,
       magnet,
-      size: item['nyaa:size'] || '',
-      seeders: parseInt(item['nyaa:seeders']) || 0,
-      leechers: parseInt(item['nyaa:leechers']) || 0,
+      size: item.size,
+      seeders: item.seeders,
+      leechers: item.leechers,
       uploader: ''
     };
   });
@@ -247,7 +257,7 @@ async function searchAnimeGarden(title) {
   }
 
   try {
-    const res = await httpGet(url);
+    const res = await httpGet(url, { timeoutMs: 5000, maxRetries: 1 });
     const data = await res.json();
     let rawResults = [];
     if (data && typeof data === 'object') {
@@ -273,7 +283,7 @@ async function searchAnimeGarden(title) {
 
 async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap, force = false, logger) {
   const log = logger || rootLogger;
-  const allResults = [];
+  const validatedResults = [];
   let rateLimited = false;
 
   for (const src of sourceList) {
@@ -294,14 +304,18 @@ async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap,
           for (const r of res) {
             const processed = processRelease(r, media);
             if (processed !== null) {
+              validatedResults.push(processed);
               validCount++;
               if ((r.seeders || 0) >= 10) hasGoodSeeders = true;
             }
           }
-          allResults.push(...res);
         }
       } catch (err) {
-        if (err.status === 429) rateLimited = true;
+        if (err.status === 429) {
+          rateLimited = true;
+          log.warn(`Source ${src} query "${q}" rate limited, stopping further queries`);
+          break;
+        }
         log.warn(`Source ${src} query "${q}" failed:`, err.message);
       }
 
@@ -312,16 +326,10 @@ async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap,
     }
   }
 
-  log.debug(`[aggregate] raw results for "${media.title}": ${allResults.length} (rateLimited: ${rateLimited})`);
-
-  const validated = allResults
-    .map(r => processRelease(r, media))
-    .filter(r => r !== null);
-
-  log.debug(`[aggregate] validated results for "${media.title}": ${validated.length}`);
+  log.debug(`[aggregate] validated results for "${media.title}": ${validatedResults.length} (rateLimited: ${rateLimited})`);
 
   const hashMap = new Map();
-  for (const r of validated) {
+  for (const r of validatedResults) {
     const hash = extractMagnetHash(r.magnet) || `${normalizeTitle(r.name)}|${r.size}`;
     if (!hashMap.has(hash) || r.score > hashMap.get(hash).score) {
       hashMap.set(hash, r);
