@@ -1,18 +1,18 @@
 const { kv } = require('@vercel/kv');
-const { Redis } = require('@upstash/redis');
 const logger = require('./logger');
+const redisClient = require('./redisClient');
 
-let upstash = null;
-if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-  try {
-    upstash = new Redis({
-      url: process.env.UPSTASH_REDIS_REST_URL,
-      token: process.env.UPSTASH_REDIS_REST_TOKEN,
-    });
-    logger.info('Upstash Redis initialized as secondary cache');
-  } catch (err) {
-    logger.warn({ err }, 'Upstash Redis initialization failed');
+const upstash = redisClient;
+
+const memoryCache = new Map();
+const MAX_MEMORY_CACHE_SIZE = 500;
+
+function addToMemoryCache(key, value) {
+  if (memoryCache.size >= MAX_MEMORY_CACHE_SIZE) {
+    const oldestKey = memoryCache.keys().next().value;
+    memoryCache.delete(oldestKey);
   }
+  memoryCache.set(key, value);
 }
 
 function safeParse(value) {
@@ -58,11 +58,26 @@ async function getCache(key) {
     }
   }
 
+  if (memoryCache.has(key)) {
+    const entry = memoryCache.get(key);
+    if (entry.expiry > Date.now()) {
+      logger.debug({ key, source: 'memory' }, 'Cache hit');
+      return entry.value;
+    }
+    memoryCache.delete(key);
+  }
+
   return null;
 }
 
 async function setCache(key, data, ttlSeconds = 3600) {
-  const serialized = JSON.stringify(data);
+  let serialized;
+  try {
+    serialized = JSON.stringify(data);
+  } catch (err) {
+    logger.warn({ err, key }, 'Cache serialization failed');
+    return;
+  }
 
   try {
     await kv.set(key, serialized, { ex: ttlSeconds });
@@ -79,6 +94,9 @@ async function setCache(key, data, ttlSeconds = 3600) {
       logger.warn({ err, key, source: 'upstash' }, 'Cache set failed');
     }
   }
+
+  addToMemoryCache(key, { value: data, expiry: Date.now() + ttlSeconds * 1000 });
+  logger.debug({ key, ttlSeconds, source: 'memory' }, 'Cache set');
 }
 
 async function deleteCache(key) {
@@ -97,6 +115,9 @@ async function deleteCache(key) {
       logger.warn({ err, key, source: 'upstash' }, 'Cache delete failed');
     }
   }
+
+  memoryCache.delete(key);
+  logger.debug({ key, source: 'memory' }, 'Cache delete');
 }
 
 async function clearAllCache() {
@@ -119,6 +140,9 @@ async function clearAllCache() {
       logger.warn({ err }, 'Upstash flushdb failed');
     }
   }
+
+  memoryCache.clear();
+  logger.info('Memory cache cleared');
 }
 
 module.exports = { getCache, setCache, deleteCache, clearAllCache };
