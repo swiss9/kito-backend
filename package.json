@@ -8,6 +8,7 @@
     "test": "jest"
   },
   "dependencies": {
+    "@upstash/ratelimit": "^0.4.4",
     "@upstash/redis": "^1.21.0",
     "@vercel/kv": "^1.0.1",
     "compression": "^1.7.4",
@@ -15,10 +16,10 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "express-rate-limit": "^7.4.0",
+    "fast-xml-parser": "^4.4.0",
     "helmet": "^8.0.0",
     "joi": "^17.13.3",
-    "pino": "^9.6.0",
-    "xml2js": "^0.6.2"
+    "pino": "^9.6.0"
   },
   "devDependencies": {
     "jest": "^29.7.0"
