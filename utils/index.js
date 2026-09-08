@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+
 function normalizeTitle(title) {
   if (!title) return '';
   return title
@@ -43,6 +45,13 @@ function getReleaseGroup(name) {
   return match ? match[1] : null;
 }
 
+function isValidAdminToken(provided) {
+  const expected = process.env.ADMIN_TOKEN;
+  if (!expected || !provided) return false;
+  if (provided.length !== expected.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+}
+
 module.exports = {
   normalizeTitle,
   stripSeasonInfo,
@@ -50,5 +59,6 @@ module.exports = {
   escapeRegex,
   wordBoundaryMatch,
   extractMagnetHash,
-  getReleaseGroup
+  getReleaseGroup,
+  isValidAdminToken
 };
