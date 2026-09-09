@@ -1,157 +1,184 @@
-const { kv } = require('@vercel/kv');
-const logger = require('./logger');
-const redisClient = require('./redisClient');
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const compression = require('compression');
+const rateLimit = require('express-rate-limit');
+const crypto = require('crypto');
+const { Ratelimit } = require('@upstash/ratelimit');
+const { errorHandler } = require('./middleware/errorHandler');
+const { checkTmdb, checkAnilist, checkTorrentclaw, checkNyaa, checkKv } = require('./services/healthService');
+const { clearAllCache, deleteCache, getCache, setCache } = require('./services/cacheService');
+const { isValidAdminToken } = require('./utils');
+const redisClient = require('./services/redisClient');
+const logger = require('./services/logger');
 
-const upstash = redisClient;
+const app = express();
 
-const memoryCache = new Map();
-const MAX_MEMORY_CACHE_SIZE = 500;
+app.set('trust proxy', 1);
 
-function addToMemoryCache(key, value) {
-  if (memoryCache.size >= MAX_MEMORY_CACHE_SIZE) {
-    const oldestKey = memoryCache.keys().next().value;
-    memoryCache.delete(oldestKey);
+app.use((req, res, next) => {
+  let requestId = req.headers['x-request-id'];
+  if (!requestId) {
+    requestId = crypto.randomUUID();
   }
-  memoryCache.set(key, value);
+  req.id = requestId;
+  req.logger = logger.child({ requestId });
+  res.setHeader('x-request-id', requestId);
+  req.logger.info({ method: req.method, url: req.url }, 'Request received');
+  next();
+});
+
+app.use((req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
+
+app.use(helmet());
+
+app.use(cors({
+  origin: process.env.FRONTEND_ORIGIN || 'http://localhost:3000',
+  methods: ['GET', 'POST', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'x-admin-token']
+}));
+
+app.use(compression());
+app.use(express.json());
+
+let generalRatelimit = null;
+if (redisClient) {
+  generalRatelimit = new Ratelimit({
+    redis: redisClient,
+    limiter: Ratelimit.slidingWindow(100, '15 m'),
+    prefix: 'kito_general_ratelimit',
+  });
 }
 
-function touchMemoryCache(key) {
-  if (memoryCache.has(key)) {
-    const entry = memoryCache.get(key);
-    memoryCache.delete(key);
-    memoryCache.set(key, entry);
-  }
-}
+const generalLimiterMemory = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: { code: 'RATE_LIMIT', message: 'Too many requests' } }
+});
 
-function safeParse(value) {
-  if (value === null || value === undefined) return null;
-  if (typeof value === 'string') {
+async function generalRateLimiterMiddleware(req, res, next) {
+  if (generalRatelimit) {
     try {
-      return JSON.parse(value);
-    } catch (_) {
-      return null;
-    }
-  }
-  return value;
-}
-
-async function getCache(key) {
-  let value = null;
-
-  try {
-    const kvValue = await kv.get(key);
-    if (kvValue !== null && kvValue !== undefined) {
-      value = safeParse(kvValue);
-      if (value !== null) {
-        logger.debug({ key, source: 'vercel-kv' }, 'Cache hit');
-        return value;
+      const identifier = req.ip || 'anonymous';
+      const { success, limit, remaining, reset } = await generalRatelimit.limit(identifier);
+      res.setHeader('RateLimit-Limit', limit);
+      res.setHeader('RateLimit-Remaining', remaining);
+      res.setHeader('RateLimit-Reset', Math.ceil((reset - Date.now()) / 1000));
+      if (!success) {
+        return res.status(429).json({ error: { code: 'RATE_LIMIT', message: 'Too many requests' } });
       }
+      next();
+    } catch (err) {
+      req.logger?.warn({ err }, 'General rate limiter failed, falling back to memory');
+      generalLimiterMemory(req, res, next);
     }
-  } catch (err) {
-    logger.warn({ err, key, source: 'vercel-kv' }, 'Cache get failed');
+  } else {
+    generalLimiterMemory(req, res, next);
+  }
+}
+
+app.use('/api', generalRateLimiterMiddleware);
+
+const adminLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: { code: 'ADMIN_RATE_LIMIT', message: 'Too many admin requests' } }
+});
+
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', message: 'KITO API running on Vercel.' });
+});
+
+app.delete('/api/admin/cache', adminLimiter, async (req, res) => {
+  const providedToken = req.headers['x-admin-token'];
+  if (!isValidAdminToken(providedToken)) {
+    return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Invalid admin token' } });
   }
 
-  if (upstash) {
-    try {
-      const upstashValue = await upstash.get(key);
-      if (upstashValue !== null && upstashValue !== undefined) {
-        value = safeParse(upstashValue);
-        if (value !== null) {
-          logger.debug({ key, source: 'upstash' }, 'Cache hit');
-          return value;
-        }
+  const key = req.query.key;
+  if (key !== undefined && (typeof key !== 'string' || !key.trim())) {
+    return res.status(400).json({ error: { code: 'INVALID_KEY', message: 'Cache key must be a non-empty string' } });
+  }
+
+  try {
+    if (key) {
+      await deleteCache(key);
+      res.json({ success: true, cleared: key });
+    } else {
+      await clearAllCache();
+      res.json({ success: true, cleared: 'all' });
+    }
+  } catch (err) {
+    req.logger.error({ err }, 'Cache clear failed');
+    res.status(500).json({
+      error: {
+        code: 'CACHE_CLEAR_FAILED',
+        message: err.message || 'Cache clear operation failed'
       }
-    } catch (err) {
-      logger.warn({ err, key, source: 'upstash' }, 'Cache get failed');
-    }
+    });
   }
+});
 
-  if (memoryCache.has(key)) {
-    const entry = memoryCache.get(key);
-    if (entry.expiry > Date.now()) {
-      touchMemoryCache(key);
-      logger.debug({ key, source: 'memory' }, 'Cache hit');
-      return entry.value;
+const DEFAULT_RECOMMENDED = [
+  { id: 'anilist:30', title: 'Neon Genesis Evangelion', subtitle: '1995 · 26 eps · Action, Drama, Sci-Fi', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx30-gJXjqBtvgs9y.jpg', provider: 'anilist', providerId: '30', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'anilist:12949', title: 'Kamen Rider Kuuga', subtitle: '2000 · 49 eps · Action, Adventure, Drama', category: 'tokusatsu', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx12949-L6H1PTR4fyMT.png', provider: 'anilist', providerId: '12949', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'anilist:51009', title: 'Fullmetal Alchemist: Brotherhood', subtitle: '2009 · 64 eps · Action, Adventure, Drama', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx51009-8IjrnnC8ZwYd.jpg', provider: 'anilist', providerId: '51009', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'anilist:101685', title: 'Kamen Rider Build', subtitle: '2017 · 49 eps · Action, Comedy, Drama', category: 'tokusatsu', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx101685-iw0Lm92EBMCj.jpg', provider: 'anilist', providerId: '101685', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'tmdb:71925', title: 'Ultraman Tiga', subtitle: '1996 · 52 eps · Action, Adventure, Sci-Fi', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/7pCjKEWPqlB64WaVHrmWKKT0jqR.jpg', provider: 'tmdb', providerId: '71925', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'anilist:23', title: 'Cowboy Bebop', subtitle: '1998 · 26 eps · Action, Adventure, Drama', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx23-WBquk23FslmQ.jpg', provider: 'anilist', providerId: '23', hasRelease: true, hasBatch: false, collection: false }
+];
+
+app.get('/api/recommended', async (req, res) => {
+  try {
+    let shows = await getCache('recommended_shows');
+    if (!shows) {
+      await setCache('recommended_shows', DEFAULT_RECOMMENDED, 86400);
+      shows = DEFAULT_RECOMMENDED;
     }
-    memoryCache.delete(key);
+    res.json({ items: shows });
+  } catch (err) {
+    req.logger?.error({ err }, 'Failed to fetch recommended shows');
+    res.status(500).json({ error: { code: 'RECOMMENDED_FAILED', message: 'Could not load recommended shows' } });
   }
+});
 
-  return null;
+const searchRoutes = require('./routes/search');
+const mediaRoutes = require('./routes/media');
+app.use('/api', searchRoutes);
+app.use('/api', mediaRoutes);
+
+app.get('/api/health', async (req, res) => {
+  const [tmdb, anilist, torrentclaw, nyaa, kv] = await Promise.all([
+    checkTmdb(),
+    checkAnilist(),
+    checkTorrentclaw(),
+    checkNyaa(),
+    checkKv()
+  ]);
+  const checks = { tmdb, anilist, torrentclaw, nyaa, kv };
+  const healthy = Object.values(checks).every(c => c === 'ok');
+  res.status(200).json({ status: healthy ? 'ok' : 'degraded', checks });
+});
+
+app.use((req, res) => {
+  res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Route not found' } });
+});
+
+app.use(errorHandler);
+
+if (require.main === module) {
+  const port = process.env.PORT || 3000;
+  app.listen(port, () => {
+    logger.info({ port }, 'KITO API running');
+  });
 }
 
-async function setCache(key, data, ttlSeconds = 3600) {
-  let serialized;
-  try {
-    serialized = JSON.stringify(data);
-  } catch (err) {
-    logger.warn({ err, key }, 'Cache serialization failed');
-    return;
-  }
-
-  try {
-    await kv.set(key, serialized, { ex: ttlSeconds });
-    logger.debug({ key, ttlSeconds, source: 'vercel-kv' }, 'Cache set');
-  } catch (err) {
-    logger.warn({ err, key, source: 'vercel-kv' }, 'Cache set failed');
-  }
-
-  if (upstash) {
-    try {
-      await upstash.set(key, serialized, { ex: ttlSeconds });
-      logger.debug({ key, ttlSeconds, source: 'upstash' }, 'Cache set');
-    } catch (err) {
-      logger.warn({ err, key, source: 'upstash' }, 'Cache set failed');
-    }
-  }
-
-  addToMemoryCache(key, { value: data, expiry: Date.now() + ttlSeconds * 1000 });
-  logger.debug({ key, ttlSeconds, source: 'memory' }, 'Cache set');
-}
-
-async function deleteCache(key) {
-  try {
-    await kv.del(key);
-    logger.debug({ key, source: 'vercel-kv' }, 'Cache delete');
-  } catch (err) {
-    logger.warn({ err, key, source: 'vercel-kv' }, 'Cache delete failed');
-  }
-
-  if (upstash) {
-    try {
-      await upstash.del(key);
-      logger.debug({ key, source: 'upstash' }, 'Cache delete');
-    } catch (err) {
-      logger.warn({ err, key, source: 'upstash' }, 'Cache delete failed');
-    }
-  }
-
-  memoryCache.delete(key);
-  logger.debug({ key, source: 'memory' }, 'Cache delete');
-}
-
-async function clearAllCache() {
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('flushdb is disabled in production');
-  }
-
-  try {
-    await kv.flushdb();
-    logger.info('KV flushdb completed');
-  } catch (err) {
-    logger.warn({ err }, 'KV flushdb failed');
-  }
-
-  if (upstash) {
-    try {
-      await upstash.flushdb();
-      logger.info('Upstash flushdb completed');
-    } catch (err) {
-      logger.warn({ err }, 'Upstash flushdb failed');
-    }
-  }
-
-  memoryCache.clear();
-  logger.info('Memory cache cleared');
-}
-
-module.exports = { getCache, setCache, deleteCache, clearAllCache };
+module.exports = app;
