@@ -596,14 +596,8 @@ function processRelease(rawRelease, media) {
       coverageType = CoverageType.PARTIAL;
       coveragePercent = null;
     } else {
-      const season = parsed.season;
-      if (season !== null && media.episodeCount && media.episodeCount > 0) {
-        coverageType = CoverageType.COMPLETE;
-        coveragePercent = 100;
-      } else {
-        coverageType = CoverageType.COMPLETE;
-        coveragePercent = 100;
-      }
+      coverageType = CoverageType.COMPLETE;
+      coveragePercent = 100;
     }
   } else if (episodeStart !== null) {
     coverageType = CoverageType.SINGLE;
