@@ -15,6 +15,14 @@ function addToMemoryCache(key, value) {
   memoryCache.set(key, value);
 }
 
+function touchMemoryCache(key) {
+  if (memoryCache.has(key)) {
+    const entry = memoryCache.get(key);
+    memoryCache.delete(key);
+    memoryCache.set(key, entry);
+  }
+}
+
 function safeParse(value) {
   if (value === null || value === undefined) return null;
   if (typeof value === 'string') {
@@ -61,6 +69,7 @@ async function getCache(key) {
   if (memoryCache.has(key)) {
     const entry = memoryCache.get(key);
     if (entry.expiry > Date.now()) {
+      touchMemoryCache(key);
       logger.debug({ key, source: 'memory' }, 'Cache hit');
       return entry.value;
     }
