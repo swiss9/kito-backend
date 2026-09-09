@@ -8,7 +8,7 @@
     "test": "jest"
   },
   "dependencies": {
-    "@upstash/ratelimit": "^0.4.4",
+    "@upstash/ratelimit": "^2.0.0",
     "@upstash/redis": "^1.21.0",
     "@vercel/kv": "^1.0.1",
     "compression": "^1.7.4",
