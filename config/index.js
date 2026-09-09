@@ -1,8 +1,4 @@
-const fs = require('fs');
-const path = require('path');
-
-const constantsPath = path.join(__dirname, 'constants.json');
-const constants = JSON.parse(fs.readFileSync(constantsPath, 'utf8'));
+const constants = require('./constants.json');
 
 const TMDB_API_KEY = process.env.TMDB_API_KEY;
 const TORRENTCLAW_API_KEY = process.env.TORRENTCLAW_API_KEY;
