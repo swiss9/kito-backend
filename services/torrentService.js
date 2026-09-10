@@ -1,7 +1,7 @@
 const { TORRENTCLAW_API_KEY, ALIAS_MAP, TOKUSATSU_FRANCHISES } = require('../config');
 const { getCache, setCache, deleteCache } = require('../services/cacheService');
 const { normalizeTitle, extractMagnetHash, stripSeasonInfo } = require('../utils');
-const { processRelease } = require('./rankingService');
+const { isReleaseValid } = require('./releaseRankingService');
 const { httpGet } = require('./httpClient');
 const rootLogger = require('./logger');
 const { XMLParser } = require('fast-xml-parser');
@@ -97,7 +97,7 @@ function extractFranchiseTitle(title) {
 }
 
 async function searchTorrentClaw(title) {
-  const baseUrl = 'https://torrentclaw.com/api/search';
+  const baseUrl = 'https://torrentclaw.com/api/v1/search';
   const params = new URLSearchParams({ q: title, category: 'all', limit: 100 });
   if (TORRENTCLAW_API_KEY) params.append('apikey', TORRENTCLAW_API_KEY);
   const url = `${baseUrl}?${params.toString()}`;
@@ -119,6 +119,7 @@ async function searchTorrentClaw(title) {
     let rawResults = [];
     if (data && typeof data === 'object') {
       if (Array.isArray(data.results)) rawResults = data.results;
+      else if (Array.isArray(data.data)) rawResults = data.data;
       else if (Array.isArray(data)) rawResults = data;
     }
     const mapped = rawResults.map(t => ({
@@ -281,9 +282,20 @@ async function searchAnimeGarden(title) {
   }
 }
 
+function deduplicateRawReleases(releases) {
+  const map = new Map();
+  for (const r of releases) {
+    const hash = extractMagnetHash(r.magnet) || `${normalizeTitle(r.name)}|${r.size}`;
+    if (!map.has(hash)) {
+      map.set(hash, r);
+    }
+  }
+  return Array.from(map.values());
+}
+
 async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap, force = false, logger) {
   const log = logger || rootLogger;
-  const validatedResults = [];
+  const rawResults = [];
   let rateLimited = false;
 
   for (const src of sourceList) {
@@ -302,12 +314,11 @@ async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap,
         const res = await searchFn(q, force);
         if (Array.isArray(res)) {
           for (const r of res) {
-            const processed = processRelease(r, media);
-            if (processed !== null) {
-              validatedResults.push(processed);
+            if (isReleaseValid(r, media)) {
               validCount++;
               if ((r.seeders || 0) >= 10) hasGoodSeeders = true;
             }
+            rawResults.push(r);
           }
         }
       } catch (err) {
@@ -326,18 +337,9 @@ async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap,
     }
   }
 
-  log.debug(`[aggregate] validated results for "${media.title}": ${validatedResults.length} (rateLimited: ${rateLimited})`);
+  log.debug(`[aggregate] raw results for "${media.title}": ${rawResults.length} (rateLimited: ${rateLimited})`);
 
-  const hashMap = new Map();
-  for (const r of validatedResults) {
-    const hash = extractMagnetHash(r.magnet) || `${normalizeTitle(r.name)}|${r.size}`;
-    if (!hashMap.has(hash) || r.score > hashMap.get(hash).score) {
-      hashMap.set(hash, r);
-    }
-  }
-  const deduped = Array.from(hashMap.values());
-  deduped.sort((a, b) => b.score - a.score);
-  return { results: deduped, rateLimited };
+  return { results: deduplicateRawReleases(rawResults), rateLimited };
 }
 
 async function searchAnimeReleases(media, force = false, logger) {
@@ -388,7 +390,7 @@ async function searchAnimeReleases(media, force = false, logger) {
     }
   }
 
-  return { results, rateLimited };
+  return { results: deduplicateRawReleases(results), rateLimited };
 }
 
 async function searchReleases(media, force = false) {
@@ -399,20 +401,6 @@ async function searchReleases(media, force = false) {
     return searchAnimeReleases(media, force);
   }
   return { results: [], rateLimited: false };
-}
-
-function mergeReleases(primary, fallback) {
-  const combined = [...primary, ...fallback];
-  const hashMap = new Map();
-  for (const r of combined) {
-    const hash = extractMagnetHash(r.magnet) || `${normalizeTitle(r.name)}|${r.size}`;
-    if (!hashMap.has(hash) || r.score > hashMap.get(hash).score) {
-      hashMap.set(hash, r);
-    }
-  }
-  const deduped = Array.from(hashMap.values());
-  deduped.sort((a, b) => b.score - a.score);
-  return deduped;
 }
 
 async function searchReleasesWithFallback(media, force = false, logger = null) {
@@ -435,9 +423,9 @@ async function searchReleasesWithFallback(media, force = false, logger = null) {
   }
 
   const isMovie = media.mediaType === 'movie' || media.episodeCount === 1;
-  const hasCompleteRelease = isMovie 
-    ? (nyaaResults.length > 0) 
-    : nyaaResults.some(r => r.coverageType === 'complete');
+  const hasCompleteRelease = isMovie
+    ? (nyaaResults.length > 0)
+    : nyaaResults.some(r => isReleaseValid(r, media) && r.name.match(/complete|batch/i));
   const shouldFallback = (nyaaResults.length === 0) || !hasCompleteRelease;
 
   if (shouldFallback) {
@@ -449,11 +437,11 @@ async function searchReleasesWithFallback(media, force = false, logger = null) {
         gardenRaw = await searchAnimeGarden(media.title);
         clawRaw = await searchTorrentClaw(media.title);
       }
-      const gardenProcessed = gardenRaw.map(r => processRelease(r, media)).filter(r => r !== null);
-      const clawProcessed = clawRaw.map(r => processRelease(r, media)).filter(r => r !== null);
-      log.info({ source: 'animegarden', count: gardenProcessed.length }, 'AnimeGarden fallback completed');
-      log.info({ source: 'torrentclaw', count: clawProcessed.length }, 'TorrentClaw fallback completed');
-      allRawResults = allRawResults.concat(gardenProcessed, clawProcessed);
+      const gardenValid = gardenRaw.filter(r => isReleaseValid(r, media));
+      const clawValid = clawRaw.filter(r => isReleaseValid(r, media));
+      log.info({ source: 'animegarden', count: gardenValid.length }, 'AnimeGarden fallback completed');
+      log.info({ source: 'torrentclaw', count: clawValid.length }, 'TorrentClaw fallback completed');
+      allRawResults = allRawResults.concat(gardenValid, clawValid);
     } catch (err) {
       log.warn({ err }, 'Fallback sources failed');
       warnings.push('Fallback sources failed.');
@@ -462,7 +450,7 @@ async function searchReleasesWithFallback(media, force = false, logger = null) {
     log.info('Nyaa returned complete release, skipping fallback');
   }
 
-  const merged = mergeReleases(allRawResults, []);
+  const merged = deduplicateRawReleases(allRawResults);
   log.info({ title: media.title, total: merged.length, warnings }, 'Torrent search finalised');
   return { releases: merged, warnings, rateLimited };
 }
