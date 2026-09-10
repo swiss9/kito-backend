@@ -15,8 +15,13 @@ async function checkAnilist() {
   try {
     const res = await fetch('https://graphql.anilist.co', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: '{ __typename }' }),
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        query: 'query { Page(perPage: 1) { media(type: ANIME) { id } } }'
+      }),
       signal: AbortSignal.timeout(5000)
     });
     return res.ok ? 'ok' : 'error';
@@ -26,11 +31,15 @@ async function checkAnilist() {
 }
 
 async function checkTorrentclaw() {
+  if (!TORRENTCLAW_API_KEY) return 'missing_key';
   try {
-    const params = new URLSearchParams({ q: 'test', limit: '1' });
-    if (TORRENTCLAW_API_KEY) params.append('apikey', TORRENTCLAW_API_KEY);
+    const params = new URLSearchParams({ q: 'test', category: 'all', limit: '1' });
+    params.append('apikey', TORRENTCLAW_API_KEY);
     const url = `https://torrentclaw.com/api/v1/search?${params.toString()}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(5000),
+      headers: { 'User-Agent': 'KITO/1.0' }
+    });
     return res.ok ? 'ok' : 'error';
   } catch {
     return 'timeout';
