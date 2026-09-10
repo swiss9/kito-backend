@@ -1,5 +1,3 @@
-const { normalizeTitle } = require('./titleService');
-
 function parseReleaseName(name) {
   const cleaned = name.replace(/\s+/g, ' ').trim();
   const episodeInfo = extractEpisodeInfo(cleaned);
@@ -46,11 +44,8 @@ function extractReleaseTitle(name) {
     .replace(/\b\d{1,3}\s*[-â€“~]\s*\d{1,3}\b/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-
   title = title.replace(/\((?:1080p|720p|2160p|480p|360p|4k|8k|WEB-DL|WEBRip|BluRay|x264|x265|HEVC|HDR|10bit|Dual Audio|Multi Sub|Multi-Subs|Dual-Audio|VOSTFR|SUBFRENCH|READNFO)\)/gi, ' ');
-  title = title.replace(/\s+/g, ' ').trim();
-
-  return title;
+  return title.replace(/\s+/g, ' ').trim();
 }
 
 function extractEpisodeNumber(name) {
@@ -143,22 +138,6 @@ function parseResolution(name) {
   return match ? match[1].toLowerCase() : 'unknown';
 }
 
-function isBatchRelease(name, media) {
-  const lower = name.toLowerCase();
-  if (lower.includes('batch') || lower.includes('complete series') || lower.includes('complete season') || lower.includes('season pack') || lower.includes('box set')) return true;
-  const range = extractEpisodeRange(name);
-  if (range) {
-    if (media && media.mediaType !== 'movie') {
-      const total = media.seasonEpisodeCount || media.totalEpisodeCount || 0;
-      if (total > 0) {
-        const covered = range.end - range.start + 1;
-        return covered >= total * 0.9;
-      }
-    }
-  }
-  return false;
-}
-
 function getReleaseGroup(name) {
   const match = name.match(/\[([^\]]+)\]/);
   return match ? match[1] : null;
@@ -175,6 +154,5 @@ module.exports = {
   parseSource,
   parseCodec,
   parseResolution,
-  isBatchRelease,
   getReleaseGroup
 };
