@@ -11,6 +11,7 @@ const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, CoverageType, TRUSTED_GROUPS, MediaType, TOKUSATSU_FRANCHISES } = require('../config');
 const { fetchAniList, searchAnilistByTitle, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia, mediaToCard } = require('../services/metadataService');
 const { searchReleasesWithFallback } = require('../services/torrentService');
+const { rankReleases, selectBestCandidates } = require('../services/releaseRankingService');
 const { isValidAdminToken } = require('../utils');
 const redisClient = require('../services/redisClient');
 const logger = require('../services/logger');
@@ -88,21 +89,35 @@ const aiSearchSchema = Joi.object({
   prompt: Joi.string().trim().min(1).max(500).required()
 });
 
-function extractEpisodeNumberFallback(name) {
-  const patterns = [
-    /[Ee](\d{2,3})(?![0-9])/,
-    /[Ee]p(?:isode)?\s*(\d+)/i,
-    /EP\s*(\d+)/i,
-    /#(\d+)/
-  ];
-  for (const pat of patterns) {
-    const match = name.match(pat);
-    if (match) {
-      const num = parseInt(match[1]);
-      if (num > 0 && num < 1000) return num;
-    }
+function serializeRelease(r) {
+  let description = 'Unknown coverage';
+  const type = r.coverageType;
+
+  if (type === 'complete_season' || type === 'complete_series' || type === CoverageType.COMPLETE) {
+    description = 'Complete series';
+  } else if (type === 'partial_batch' || type === 'episode_range' || type === CoverageType.PARTIAL) {
+    description = `Episodes ${r.episodeStart}-${r.episodeEnd} (${r.coveragePercent || 0}%)`;
+  } else if (type === 'single' || type === CoverageType.SINGLE) {
+    description = `Episode ${r.episodeStart}`;
+  } else if (type === 'movie') {
+    description = 'Movie';
   }
-  return null;
+
+  return {
+    name: r.name,
+    magnet: r.magnet,
+    size: r.size,
+    seeders: r.seeders,
+    leechers: r.leechers,
+    uploader: r.uploader,
+    type: type,
+    quality: r.qualityLabel,
+    description: description,
+    score: r.score,
+    confidence: r.confidence,
+    releaseGroup: r.releaseGroup,
+    isTrusted: TRUSTED_GROUPS.some(g => r.releaseGroup && r.releaseGroup.toLowerCase().includes(g.toLowerCase()))
+  };
 }
 
 async function fallbackFetchAnimeByTitle(title, categoryId, logger) {
@@ -131,45 +146,7 @@ async function fallbackFetchAnimeByTitle(title, categoryId, logger) {
 
 function pickBestRelease(releases) {
   if (!releases.length) return null;
-  const order = {
-    [CoverageType.COMPLETE]: 0,
-    [CoverageType.PARTIAL]: 1,
-    [CoverageType.SINGLE]: 2,
-    [CoverageType.UNKNOWN]: 3,
-  };
-  const confidenceOrder = { high: 0, medium: 1, low: 2 };
-  const MIN_SEEDERS = 5;
-  let candidates = releases.filter(r => (r.seeders || 0) >= MIN_SEEDERS);
-  if (!candidates.length) candidates = releases;
-  const sorted = [...candidates].sort((a, b) => {
-    const covDiff = (order[a.coverageType] ?? 3) - (order[b.coverageType] ?? 3);
-    if (covDiff !== 0) return covDiff;
-    const confDiff = (confidenceOrder[a.confidence] ?? 3) - (confidenceOrder[b.confidence] ?? 3);
-    if (confDiff !== 0) return confDiff;
-    return b.score - a.score;
-  });
-  return sorted[0];
-}
-
-function serializeRelease(r) {
-  return {
-    name: r.name,
-    magnet: r.magnet,
-    size: r.size,
-    seeders: r.seeders,
-    leechers: r.leechers,
-    uploader: r.uploader,
-    type: r.coverageType,
-    quality: r.qualityLabel,
-    description: r.coverageType === CoverageType.COMPLETE ? 'Complete series' :
-                r.coverageType === CoverageType.PARTIAL ? `Episodes ${r.episodeStart}-${r.episodeEnd} (${r.coveragePercent}%)` :
-                r.coverageType === CoverageType.SINGLE ? `Episode ${r.episodeStart}` :
-                'Unknown coverage',
-    score: r.score,
-    confidence: r.confidence,
-    releaseGroup: r.releaseGroup,
-    isTrusted: TRUSTED_GROUPS.some(g => r.releaseGroup && r.releaseGroup.toLowerCase().includes(g.toLowerCase()))
-  };
+  return releases[0];
 }
 
 async function getMediaObject(mediaId, categoryId, title, logger) {
@@ -332,7 +309,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
       const start = (page - 1) * limit;
       const end = start + limit;
       const paginatedReleases = cached.releases.slice(start, end);
-      const bestRelease = cached.releases.length ? pickBestRelease(cached.releases) : null;
+      const bestRelease = cached.releases.length ? cached.releases[0] : null;
       return res.json({
         mediaId,
         category: categoryId,
@@ -360,53 +337,22 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
   }
 
   const torrentResult = await searchReleasesWithFallback(mediaObject, force, logger);
-  let releases = torrentResult.releases;
+  const rawReleases = torrentResult.releases;
   const warnings = torrentResult.warnings;
   const rateLimited = torrentResult.rateLimited;
 
-  const singleEpisodes = releases.filter(r => {
-    if (r.coverageType === CoverageType.SINGLE && r.episodeStart !== null) return true;
-    if (r.coverageType !== CoverageType.SINGLE && r.episodeStart === null) {
-      const ep = extractEpisodeNumberFallback(r.name);
-      if (ep !== null) {
-        r.episodeStart = ep;
-        r.coverageType = CoverageType.SINGLE;
-        return true;
-      }
-    }
-    return false;
-  });
-  const nonSingles = releases.filter(r => !(r.coverageType === CoverageType.SINGLE && r.episodeStart !== null));
-  const episodeMap = new Map();
-  for (const ep of singleEpisodes) {
-    const key = ep.episodeStart;
-    const existing = episodeMap.get(key);
-    if (!existing || ep.seeders > existing.seeders || (ep.seeders === existing.seeders && ep.quality > existing.quality)) {
-      episodeMap.set(key, ep);
-    }
-  }
-  const dedupedSingles = Array.from(episodeMap.values());
-  releases = [...dedupedSingles, ...nonSingles];
-  releases.sort((a, b) => {
-    if (a.coverageType === CoverageType.SINGLE && b.coverageType === CoverageType.SINGLE) {
-      return (a.episodeStart || 0) - (b.episodeStart || 0);
-    }
-    if (a.coverageType === CoverageType.SINGLE) return 1;
-    if (b.coverageType === CoverageType.SINGLE) return -1;
-    return b.score - a.score;
-  });
+  const ranked = rankReleases(mediaObject, rawReleases, null);
+  const selected = selectBestCandidates(ranked, mediaObject, null);
 
   if (!force) {
-    await setCache(cacheKey, { media: mediaObject, releases, warnings, rateLimited }, 43200);
+    await setCache(cacheKey, { media: mediaObject, releases: selected, warnings, rateLimited }, 43200);
   }
-
-  const best = pickBestRelease(releases);
 
   const start = (page - 1) * limit;
   const end = start + limit;
-  const paginated = releases.slice(start, end);
+  const paginated = selected.slice(start, end);
 
-  logger.info({ total: releases.length, page, limit, best: !!best, warnings }, 'Releases response sent');
+  logger.info({ total: selected.length, page, limit, best: !!selected[0], warnings }, 'Releases response sent');
   res.json({
     mediaId,
     category: categoryId,
@@ -420,13 +366,13 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
       genres: mediaObject.genres,
       status: mediaObject.status
     },
-    total: releases.length,
+    total: selected.length,
     page,
     limit,
-    best: best ? serializeRelease(best) : null,
+    best: selected.length ? serializeRelease(selected[0]) : null,
     torrents: paginated.map(serializeRelease),
-    hasMore: end < releases.length,
-    lowConfidenceCount: releases.filter(r => r.confidence === 'low').length,
+    hasMore: end < selected.length,
+    lowConfidenceCount: selected.filter(r => r.confidence === 'low').length,
     warnings,
     rateLimited
   });
@@ -461,43 +407,14 @@ router.post('/releases/batch', batchRateLimiterMiddleware, validate(batchRelease
         if (!mediaObject) return { id: item.id, error: 'Media object not found' };
       }
       const torrentResult = await searchReleasesWithFallback(mediaObject, false, logger);
-      let releases = torrentResult.releases;
-
-      const singles = releases.filter(r => {
-        if (r.coverageType === CoverageType.SINGLE && r.episodeStart !== null) return true;
-        if (r.coverageType !== CoverageType.SINGLE && r.episodeStart === null) {
-          const ep = extractEpisodeNumberFallback(r.name);
-          if (ep !== null) {
-            r.episodeStart = ep;
-            r.coverageType = CoverageType.SINGLE;
-            return true;
-          }
-        }
-        return false;
-      });
-      const nonSingles = releases.filter(r => !(r.coverageType === CoverageType.SINGLE && r.episodeStart !== null));
-      const epMap = new Map();
-      for (const ep of singles) {
-        const key = ep.episodeStart;
-        const existing = epMap.get(key);
-        if (!existing || ep.seeders > existing.seeders || (ep.seeders === existing.seeders && ep.quality > existing.quality)) {
-          epMap.set(key, ep);
-        }
-      }
-      const deduped = Array.from(epMap.values());
-      const sorted = [...deduped, ...nonSingles].sort((a, b) => {
-        if (a.coverageType === CoverageType.SINGLE && b.coverageType === CoverageType.SINGLE) {
-          return (a.episodeStart || 0) - (b.episodeStart || 0);
-        }
-        if (a.coverageType === CoverageType.SINGLE) return 1;
-        if (b.coverageType === CoverageType.SINGLE) return -1;
-        return b.score - a.score;
-      });
+      const rawReleases = torrentResult.releases;
+      const ranked = rankReleases(mediaObject, rawReleases, null);
+      const selected = selectBestCandidates(ranked, mediaObject, null);
       return {
         id: item.id,
         title: mediaObject.title,
-        releases: sorted.map(serializeRelease),
-        total: sorted.length,
+        releases: selected.map(serializeRelease),
+        total: selected.length,
         warnings: torrentResult.warnings,
         rateLimited: torrentResult.rateLimited
       };
