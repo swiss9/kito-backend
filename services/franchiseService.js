@@ -67,4 +67,13 @@ function mapFormat(providerFormat) {
   return null;
 }
 
-module.exports = { getFranchiseKey, getTitleIdentityFallback, classifyWork, mapFormat };
+function getFranchise(media) {
+  const norm = (media.title || '').toLowerCase();
+  if (norm.includes('kamen rider') || norm.includes('masked rider')) return 'kamen rider';
+  if (norm.includes('ultraman')) return 'ultraman';
+  if (norm.includes('super sentai')) return 'super sentai';
+  if (norm.includes('gundam')) return 'gundam';
+  return null;
+}
+
+module.exports = { getFranchiseKey, getTitleIdentityFallback, classifyWork, mapFormat, getFranchise };
