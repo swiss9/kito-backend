@@ -36,9 +36,8 @@ app.use((req, res, next) => {
 
 app.use(helmet());
 
-const frontendOrigin = process.env.FRONTEND_ORIGIN;
 app.use(cors({
-  origin: frontendOrigin || 'http://localhost:3000',
+  origin: process.env.FRONTEND_ORIGIN || 'http://localhost:3000',
   methods: ['GET', 'POST', 'DELETE'],
   allowedHeaders: ['Content-Type', 'x-admin-token']
 }));
