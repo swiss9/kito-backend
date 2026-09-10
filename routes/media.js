@@ -144,11 +144,6 @@ async function fallbackFetchAnimeByTitle(title, categoryId, logger) {
   return null;
 }
 
-function pickBestRelease(releases) {
-  if (!releases.length) return null;
-  return releases[0];
-}
-
 async function getMediaObject(mediaId, categoryId, title, logger) {
   const provider = mediaId.startsWith('anilist') ? 'anilist' :
                    mediaId.startsWith('jikan') ? 'jikan' : 'tmdb';
