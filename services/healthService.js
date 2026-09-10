@@ -1,4 +1,4 @@
-const { TMDB_API_KEY } = require('../config');
+const { TMDB_API_KEY, TORRENTCLAW_API_KEY } = require('../config');
 const { kv } = require('@vercel/kv');
 
 async function checkTmdb() {
@@ -27,7 +27,10 @@ async function checkAnilist() {
 
 async function checkTorrentclaw() {
   try {
-    const res = await fetch('https://torrentclaw.com/api/search?q=test&limit=1', { signal: AbortSignal.timeout(5000) });
+    const params = new URLSearchParams({ q: 'test', limit: '1' });
+    if (TORRENTCLAW_API_KEY) params.append('apikey', TORRENTCLAW_API_KEY);
+    const url = `https://torrentclaw.com/api/v1/search?${params.toString()}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
     return res.ok ? 'ok' : 'error';
   } catch {
     return 'timeout';
