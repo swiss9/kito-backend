@@ -11,7 +11,7 @@ const { parseQueryIntent } = require('../services/queryIntentService');
 const { rankSearchResults } = require('../services/searchRankingService');
 const { httpGet } = require('../services/httpClient');
 const { stripSeasonInfo, normalizeTitle, escapeRegex, isValidAdminToken } = require('../utils');
-const { getFranchise } = require('../services/rankingService');
+const { getFranchise } = require('../services/franchiseService');
 const logger = require('../services/logger');
 
 const TOKUSATSU_KEYWORD_ID = '317204';
@@ -204,7 +204,7 @@ function cleanTitleForMatch(title) {
   for (const [from, to] of Object.entries(titleAliases)) {
     if (lower.includes(from)) lower = lower.replace(from, to);
   }
-  const parts = lower.split(/[?!:\-([/]/);
+  const parts = lower.split(/[?!:\-[\]()/]/);
   let cleaned = parts[0] || lower;
   cleaned = cleaned
     .replace(/\([^)]*\)/g, ' ')
