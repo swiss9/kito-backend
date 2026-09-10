@@ -42,15 +42,9 @@ const configuredOrigins = (process.env.FRONTEND_ORIGIN || 'http://localhost:3000
   .filter(Boolean);
 
 function corsOriginResolver(origin, callback) {
-  if (!origin) {
-    return callback(null, true);
-  }
-  if (configuredOrigins.includes('*')) {
-    return callback(null, true);
-  }
-  if (configuredOrigins.includes(origin)) {
-    return callback(null, true);
-  }
+  if (!origin) return callback(null, true);
+  if (configuredOrigins.includes('*')) return callback(null, true);
+  if (configuredOrigins.includes(origin)) return callback(null, true);
   logger.warn({ origin, allowed: configuredOrigins }, 'CORS origin rejected');
   return callback(null, false);
 }
@@ -149,12 +143,12 @@ app.delete('/api/admin/cache', adminLimiter, async (req, res) => {
 });
 
 const DEFAULT_RECOMMENDED = [
-  { id: 'anilist:30', title: 'Neon Genesis Evangelion', subtitle: '1995 · 26 eps · Action, Drama, Sci-Fi', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx30-gJXjqBtvgs9y.jpg', provider: 'anilist', providerId: '30', hasRelease: true, hasBatch: false, collection: false },
-  { id: 'anilist:12949', title: 'Kamen Rider Kuuga', subtitle: '2000 · 49 eps · Action, Adventure, Drama', category: 'tokusatsu', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx12949-L6H1PTR4fyMT.png', provider: 'anilist', providerId: '12949', hasRelease: true, hasBatch: false, collection: false },
-  { id: 'anilist:51009', title: 'Fullmetal Alchemist: Brotherhood', subtitle: '2009 · 64 eps · Action, Adventure, Drama', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx51009-8IjrnnC8ZwYd.jpg', provider: 'anilist', providerId: '51009', hasRelease: true, hasBatch: false, collection: false },
-  { id: 'anilist:101685', title: 'Kamen Rider Build', subtitle: '2017 · 49 eps · Action, Comedy, Drama', category: 'tokusatsu', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx101685-iw0Lm92EBMCj.jpg', provider: 'anilist', providerId: '101685', hasRelease: true, hasBatch: false, collection: false },
-  { id: 'tmdb:71925', title: 'Ultraman Tiga', subtitle: '1996 · 52 eps · Action, Adventure, Sci-Fi', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/7pCjKEWPqlB64WaVHrmWKKT0jqR.jpg', provider: 'tmdb', providerId: '71925', hasRelease: true, hasBatch: false, collection: false },
-  { id: 'anilist:23', title: 'Cowboy Bebop', subtitle: '1998 · 26 eps · Action, Adventure, Drama', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx23-WBquk23FslmQ.jpg', provider: 'anilist', providerId: '23', hasRelease: true, hasBatch: false, collection: false }
+  { id: 'anilist:30', title: 'Neon Genesis Evangelion', subtitle: '1995 Â· 26 eps Â· Action, Drama, Sci-Fi', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx30-gJXjqBtvgs9y.jpg', provider: 'anilist', providerId: '30', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'anilist:12949', title: 'Kamen Rider Kuuga', subtitle: '2000 Â· 49 eps Â· Action, Adventure, Drama', category: 'tokusatsu', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx12949-L6H1PTR4fyMT.png', provider: 'anilist', providerId: '12949', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'anilist:51009', title: 'Fullmetal Alchemist: Brotherhood', subtitle: '2009 Â· 64 eps Â· Action, Adventure, Drama', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx51009-8IjrnnC8ZwYd.jpg', provider: 'anilist', providerId: '51009', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'anilist:101685', title: 'Kamen Rider Build', subtitle: '2017 Â· 49 eps Â· Action, Comedy, Drama', category: 'tokusatsu', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx101685-iw0Lm92EBMCj.jpg', provider: 'anilist', providerId: '101685', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'tmdb:71925', title: 'Ultraman Tiga', subtitle: '1996 Â· 52 eps Â· Action, Adventure, Sci-Fi', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/7pCjKEWPqlB64WaVHrmWKKT0jqR.jpg', provider: 'tmdb', providerId: '71925', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'anilist:23', title: 'Cowboy Bebop', subtitle: '1998 Â· 26 eps Â· Action, Adventure, Drama', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx23-WBquk23FslmQ.jpg', provider: 'anilist', providerId: '23', hasRelease: true, hasBatch: false, collection: false }
 ];
 
 app.get('/api/recommended', async (req, res) => {
