@@ -120,8 +120,91 @@ function serializeRelease(r) {
   };
 }
 
+async function checkTokusatsuKeyword(tmdbId, mediaType) {
+  const cacheKey = `tokusatsu_keyword:${tmdbId}:${mediaType}`;
+  const cached = await getCache(cacheKey);
+  if (cached !== null) return cached;
+  try {
+    const data = await fetchTmdb(`${mediaType}/${tmdbId}/keywords`);
+    const keywords = data.keywords || data.results || [];
+    const isTokusatsu = keywords.some(k => k.id === parseInt(TOKUSATSU_KEYWORD_ID));
+    await setCache(cacheKey, isTokusatsu, 604800);
+    return isTokusatsu;
+  } catch (err) {
+    logger.warn({ err, tmdbId, mediaType }, 'Failed to check tokusatsu keyword');
+    return false;
+  }
+}
+
+async function searchTmdbTvByTitle(title, categoryId, logger) {
+  if (!process.env.TMDB_API_KEY) {
+    throw new ApiError(503, 'TMDB API key not configured', 'TMDB_KEY_MISSING');
+  }
+  if (!title) return null;
+
+  try {
+    let results = await fetchTmdb('search/tv', { query: title, page: 1 });
+    let mediaType = 'tv';
+
+    if (!results || !results.length) {
+      results = await fetchTmdb('search/movie', { query: title, page: 1 });
+      mediaType = 'movie';
+    }
+    if (!results || !results.length) return null;
+
+    const japanese = results.filter(r =>
+      r.original_language === 'ja' ||
+      (Array.isArray(r.origin_country) && r.origin_country.includes('JP'))
+    );
+    const candidates = japanese.length ? japanese : results;
+
+    let bestCandidate = null;
+    for (const candidate of candidates.slice(0, 5)) {
+      const isTokusatsu = await checkTokusatsuKeyword(candidate.id, mediaType);
+      if (isTokusatsu) {
+        bestCandidate = candidate;
+        break;
+      }
+    }
+    if (!bestCandidate && candidates.length > 0) {
+      bestCandidate = candidates[0];
+    }
+    if (!bestCandidate) return null;
+
+    const detailEndpoint = mediaType === 'tv' ? `tv/${bestCandidate.id}` : `movie/${bestCandidate.id}`;
+    let detail = null;
+    try {
+      detail = await fetchTmdb(detailEndpoint, { language: 'en-US' });
+    } catch (err) {
+      logger.warn({ err, title, tmdbId: bestCandidate.id }, 'TMDB detail fetch failed after search match');
+    }
+
+    if (!detail) {
+      logger.info({ title, tmdbId: bestCandidate.id, name: bestCandidate.name || bestCandidate.title }, 'TMDB tokusatsu resolved with search data only');
+      return normalizeTmdbMedia(bestCandidate, categoryId);
+    }
+
+    logger.info({
+      title,
+      tmdbId: detail.id,
+      name: detail.name || detail.title,
+      episodes: detail.number_of_episodes || 'movie',
+      mediaType
+    }, 'TMDB tokusatsu resolved with full detail');
+
+    return normalizeTmdbMedia(detail, categoryId);
+
+  } catch (err) {
+    logger.warn({ err, title }, 'TMDB tokusatsu title search failed');
+    return null;
+  }
+}
+
 async function fallbackFetchAnimeByTitle(title, categoryId, logger) {
-  let media = null;
+  if (categoryId === 'tokusatsu') {
+    return await searchTmdbTvByTitle(title, categoryId, logger);
+  }
+
   try {
     const jikanResults = await searchJikan(title);
     if (jikanResults.length > 0) {
@@ -135,7 +218,8 @@ async function fallbackFetchAnimeByTitle(title, categoryId, logger) {
       const tmdbResults = await fetchTmdb('search/tv', { query: title, page: 1 });
       const filtered = tmdbResults.filter(item => item.genre_ids?.includes(16) && item.original_language === 'ja');
       if (filtered.length > 0) {
-        return normalizeTmdbMedia(filtered[0], categoryId);
+        const detail = await fetchTmdb(`tv/${filtered[0].id}`, { language: 'en-US' });
+        return normalizeTmdbMedia(detail || filtered[0], categoryId);
       }
     } catch (err) {
       logger.warn({ err, title }, 'TMDB fallback failed');
@@ -145,9 +229,18 @@ async function fallbackFetchAnimeByTitle(title, categoryId, logger) {
 }
 
 async function getMediaObject(mediaId, categoryId, title, logger) {
-  const provider = mediaId.startsWith('anilist') ? 'anilist' :
-                   mediaId.startsWith('jikan') ? 'jikan' : 'tmdb';
+  const detectedProvider = mediaId.startsWith('anilist') ? 'anilist' :
+                           mediaId.startsWith('jikan') ? 'jikan' : 'tmdb';
   const providerId = mediaId.split(':')[1];
+
+  if (categoryId === 'tokusatsu' && detectedProvider !== 'tmdb') {
+    logger.info({ mediaId, title, detectedProvider }, 'Tokusatsu category - forcing TMDB title resolution');
+    const tmdbMedia = await searchTmdbTvByTitle(title, categoryId, logger);
+    if (tmdbMedia) return tmdbMedia;
+    return null;
+  }
+
+  const provider = detectedProvider;
   let rawMedia = null;
   let relations = [];
 
@@ -235,22 +328,6 @@ async function getMediaObject(mediaId, categoryId, title, logger) {
   return null;
 }
 
-async function checkTokusatsuKeyword(tmdbId, mediaType) {
-  const cacheKey = `tokusatsu_keyword:${tmdbId}:${mediaType}`;
-  const cached = await getCache(cacheKey);
-  if (cached !== null) return cached;
-  try {
-    const data = await fetchTmdb(`${mediaType}/${tmdbId}/keywords`);
-    const keywords = data.keywords || data.results || [];
-    const isTokusatsu = keywords.some(k => k.id === parseInt(TOKUSATSU_KEYWORD_ID));
-    await setCache(cacheKey, isTokusatsu, 604800);
-    return isTokusatsu;
-  } catch (err) {
-    logger.warn({ err, tmdbId, mediaType }, 'Failed to check tokusatsu keyword');
-    return false;
-  }
-}
-
 router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (req, res) => {
   const { logger } = req;
   let mediaId = req.query.id;
@@ -273,12 +350,21 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
     if (!title) {
       throw new ApiError(400, 'Title required for franchise ID', 'FRANCHISE_REQUIRES_TITLE');
     }
-    const media = await searchAnilistByTitle(title);
-    if (!media) {
-      throw new ApiError(404, 'Media not found', 'MEDIA_NOT_FOUND');
+    if (categoryId === 'tokusatsu') {
+      const media = await searchTmdbTvByTitle(title, categoryId, logger);
+      if (!media) {
+        throw new ApiError(404, 'Media not found', 'MEDIA_NOT_FOUND');
+      }
+      mediaId = media.id;
+      title = media.title;
+    } else {
+      const media = await searchAnilistByTitle(title);
+      if (!media) {
+        throw new ApiError(404, 'Media not found', 'MEDIA_NOT_FOUND');
+      }
+      mediaId = `anilist:${media.id}`;
+      title = media.title?.romaji || media.title?.english || title;
     }
-    mediaId = `anilist:${media.id}`;
-    title = media.title?.romaji || media.title?.english || title;
   }
 
   if (!mediaId) {
@@ -287,7 +373,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
 
   let mediaObject = await getMediaObject(mediaId, categoryId, title, logger);
   if (!mediaObject) {
-    if (title) {
+    if (title && categoryId !== 'tokusatsu') {
       mediaObject = await fallbackFetchAnimeByTitle(title, categoryId, logger);
       if (mediaObject) {
         logger.info({ mediaId, resolvedCategory: categoryId }, 'Fell back to title search for media');
@@ -389,14 +475,21 @@ router.post('/releases/batch', batchRateLimiterMiddleware, validate(batchRelease
       let title = item.title || '';
       if (mediaId.startsWith('franchise:')) {
         if (!title) return { id: item.id, error: 'Title required for franchise' };
-        const media = await searchAnilistByTitle(title);
-        if (!media) return { id: item.id, error: 'Media not found' };
-        mediaId = `anilist:${media.id}`;
-        title = media.title?.romaji || media.title?.english || title;
+        if (item.category === 'tokusatsu') {
+          const media = await searchTmdbTvByTitle(title, item.category, logger);
+          if (!media) return { id: item.id, error: 'Media not found' };
+          mediaId = media.id;
+          title = media.title;
+        } else {
+          const media = await searchAnilistByTitle(title);
+          if (!media) return { id: item.id, error: 'Media not found' };
+          mediaId = `anilist:${media.id}`;
+          title = media.title?.romaji || media.title?.english || title;
+        }
       }
       let mediaObject = await getMediaObject(mediaId, item.category, title, logger);
       if (!mediaObject) {
-        if (title) {
+        if (title && item.category !== 'tokusatsu') {
           mediaObject = await fallbackFetchAnimeByTitle(title, item.category, logger);
         }
         if (!mediaObject) return { id: item.id, error: 'Media object not found' };
