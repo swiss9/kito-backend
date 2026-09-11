@@ -9,7 +9,7 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
 const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, CoverageType, TRUSTED_GROUPS, MediaType, TOKUSATSU_FRANCHISES } = require('../config');
-const { fetchAniList, searchAnilistByTitle, fetchTmdb, searchJikan, normalizeAniListMedia, normalizeJikanMedia, normalizeTmdbMedia, mediaToCard } = require('../services/metadataService');
+const { fetchAniList, searchAnilistByTitle, fetchTmdb, searchJikan, searchKitsu, searchShikimori, fetchShikimori, normalizeAniListMedia, normalizeJikanMedia, normalizeKitsuMedia, normalizeTmdbMedia, normalizeShikimoriMedia, mediaToCard } = require('../services/metadataService');
 const { searchReleasesWithFallback } = require('../services/torrentService');
 const { rankReleases, selectBestCandidates } = require('../services/releaseRankingService');
 const { isValidAdminToken } = require('../utils');
@@ -180,20 +180,10 @@ async function searchTmdbTvByTitle(title, categoryId, logger) {
     }
 
     if (!detail) {
-      logger.info({ title, tmdbId: bestCandidate.id, name: bestCandidate.name || bestCandidate.title }, 'TMDB tokusatsu resolved with search data only');
       return normalizeTmdbMedia(bestCandidate, categoryId);
     }
 
-    logger.info({
-      title,
-      tmdbId: detail.id,
-      name: detail.name || detail.title,
-      episodes: detail.number_of_episodes || 'movie',
-      mediaType
-    }, 'TMDB tokusatsu resolved with full detail');
-
     return normalizeTmdbMedia(detail, categoryId);
-
   } catch (err) {
     logger.warn({ err, title }, 'TMDB tokusatsu title search failed');
     return null;
@@ -206,6 +196,15 @@ async function fallbackFetchAnimeByTitle(title, categoryId, logger) {
   }
 
   try {
+    const shikimoriResults = await searchShikimori(title);
+    if (shikimoriResults && shikimoriResults.length > 0) {
+      return normalizeShikimoriMedia(shikimoriResults[0], categoryId);
+    }
+  } catch (err) {
+    logger.warn({ err, title }, 'Shikimori fallback failed');
+  }
+
+  try {
     const jikanResults = await searchJikan(title);
     if (jikanResults.length > 0) {
       return normalizeJikanMedia(jikanResults[0], categoryId);
@@ -213,6 +212,16 @@ async function fallbackFetchAnimeByTitle(title, categoryId, logger) {
   } catch (err) {
     logger.warn({ err, title }, 'Jikan fallback failed');
   }
+
+  try {
+    const kitsuResults = await searchKitsu(title);
+    if (kitsuResults.length > 0) {
+      return normalizeKitsuMedia(kitsuResults[0]);
+    }
+  } catch (err) {
+    logger.warn({ err, title }, 'Kitsu fallback failed');
+  }
+
   if (process.env.TMDB_API_KEY) {
     try {
       const tmdbResults = await fetchTmdb('search/tv', { query: title, page: 1 });
@@ -230,7 +239,8 @@ async function fallbackFetchAnimeByTitle(title, categoryId, logger) {
 
 async function getMediaObject(mediaId, categoryId, title, logger) {
   const detectedProvider = mediaId.startsWith('anilist') ? 'anilist' :
-                           mediaId.startsWith('jikan') ? 'jikan' : 'tmdb';
+                           mediaId.startsWith('jikan') ? 'jikan' :
+                           mediaId.startsWith('shikimori') ? 'shikimori' : 'tmdb';
   const providerId = mediaId.split(':')[1];
 
   if (categoryId === 'tokusatsu' && detectedProvider !== 'tmdb') {
@@ -268,7 +278,6 @@ async function getMediaObject(mediaId, categoryId, title, logger) {
         }));
       }
       if (rawMedia) {
-        logger.info({ provider: 'anilist', id: providerId, title: rawMedia.title?.romaji }, 'AniList media fetched');
         return normalizeAniListMedia(rawMedia, categoryId, relations);
       }
     } catch (err) {
@@ -284,11 +293,18 @@ async function getMediaObject(mediaId, categoryId, title, logger) {
       });
       if (res.ok) {
         const data = await res.json();
-        logger.info({ provider: 'jikan', id: providerId, title: data.data?.title }, 'Jikan media fetched');
         return normalizeJikanMedia(data.data, categoryId);
       }
     } catch (err) {
       logger.warn({ err, provider: 'jikan', id: providerId }, 'Jikan detail failed');
+      if (title) return await fallbackFetchAnimeByTitle(title, categoryId, logger);
+    }
+  } else if (provider === 'shikimori') {
+    try {
+      const data = await fetchShikimori(`https://shikimori.one/api/animes/${providerId}`);
+      return normalizeShikimoriMedia(data, categoryId);
+    } catch (err) {
+      logger.warn({ err, provider: 'shikimori', id: providerId }, 'Shikimori detail failed');
       if (title) return await fallbackFetchAnimeByTitle(title, categoryId, logger);
     }
   } else if (provider === 'tmdb') {
@@ -316,7 +332,6 @@ async function getMediaObject(mediaId, categoryId, title, logger) {
       let resolvedCategory = categoryId;
       if (isTokusatsu && categoryId === 'anime') {
         resolvedCategory = 'tokusatsu';
-        logger.info({ mediaId, newCategory: resolvedCategory }, 'Auto-detected tokusatsu, changed category');
       }
       const media = normalizeTmdbMedia(data, resolvedCategory);
       return media;
@@ -358,12 +373,14 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
       mediaId = media.id;
       title = media.title;
     } else {
-      const media = await searchAnilistByTitle(title);
-      if (!media) {
+      const media = await searchShikimori(title);
+      if (media && media.length > 0) {
+        const normalized = normalizeShikimoriMedia(media[0], categoryId);
+        mediaId = normalized.id;
+        title = normalized.title;
+      } else {
         throw new ApiError(404, 'Media not found', 'MEDIA_NOT_FOUND');
       }
-      mediaId = `anilist:${media.id}`;
-      title = media.title?.romaji || media.title?.english || title;
     }
   }
 
@@ -373,7 +390,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
 
   let mediaObject = await getMediaObject(mediaId, categoryId, title, logger);
   if (!mediaObject) {
-    if (title && categoryId !== 'tokusatsu') {
+    if (title) {
       mediaObject = await fallbackFetchAnimeByTitle(title, categoryId, logger);
       if (mediaObject) {
         logger.info({ mediaId, resolvedCategory: categoryId }, 'Fell back to title search for media');
@@ -433,7 +450,6 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
   const end = start + limit;
   const paginated = selected.slice(start, end);
 
-  logger.info({ total: selected.length, page, limit, best: !!selected[0], warnings }, 'Releases response sent');
   res.json({
     mediaId,
     category: categoryId,
@@ -465,8 +481,6 @@ router.post('/releases/batch', batchRateLimiterMiddleware, validate(batchRelease
   const CHUNK_SIZE = 5;
   const results = [];
 
-  logger.info({ itemCount: items.length }, 'Batch releases request received');
-
   const processItem = async (item) => {
     try {
       const config = getCategory(item.category);
@@ -481,15 +495,16 @@ router.post('/releases/batch', batchRateLimiterMiddleware, validate(batchRelease
           mediaId = media.id;
           title = media.title;
         } else {
-          const media = await searchAnilistByTitle(title);
-          if (!media) return { id: item.id, error: 'Media not found' };
-          mediaId = `anilist:${media.id}`;
-          title = media.title?.romaji || media.title?.english || title;
+          const media = await searchShikimori(title);
+          if (!media || media.length === 0) return { id: item.id, error: 'Media not found' };
+          const normalized = normalizeShikimoriMedia(media[0], item.category);
+          mediaId = normalized.id;
+          title = normalized.title;
         }
       }
       let mediaObject = await getMediaObject(mediaId, item.category, title, logger);
       if (!mediaObject) {
-        if (title && item.category !== 'tokusatsu') {
+        if (title) {
           mediaObject = await fallbackFetchAnimeByTitle(title, item.category, logger);
         }
         if (!mediaObject) return { id: item.id, error: 'Media object not found' };
@@ -532,67 +547,6 @@ function generateCacheKey(bookmarks) {
   return `recommendations:v1:${hash}`;
 }
 
-async function fetchRecommendationsFromGroq(bookmarks, logger) {
-  const bookmarkInfo = bookmarks.map(b => {
-    const title = b.title || b.media?.title || 'Unknown';
-    const genres = b.genres || b.media?.genres || [];
-    const category = b.category || b.media?.category || 'anime';
-    return `${title} (${category}${genres.length ? `, genres: ${genres.join(', ')}` : ''})`;
-  }).join('\n');
-
-  const prompt = `You are an expert in anime and tokusatsu recommendations. Based on the user's following bookmarks, suggest 6 similar titles they might enjoy.
-
-Bookmarks:
-${bookmarkInfo}
-
-Return ONLY JSON in this shape:
-{ "ids": [12345, 67890, 11111, 22222, 33333, 44444] }`;
-
-  try {
-    const response = await callGroq(prompt, logger);
-    let ids = [];
-    if (response && Array.isArray(response.ids)) {
-      ids = response.ids.filter(id => Number.isInteger(id) && id > 0);
-    }
-    return ids;
-  } catch (err) {
-    logger.error({ err }, 'Groq recommendation fetch failed');
-    return [];
-  }
-}
-
-async function fetchAniListMediaByIds(ids, logger) {
-  if (!ids.length) return [];
-  const query = `
-    query($ids: [Int]) {
-      Page(page: 1, perPage: 50) {
-        media(id_in: $ids, type: ANIME) {
-          id
-          title { romaji english native }
-          synonyms
-          seasonYear
-          coverImage { medium large }
-          format
-          episodes
-          chapters
-          status
-          genres
-          isAdult
-          popularity
-        }
-      }
-    }
-  `;
-  try {
-    const data = await fetchAniList(query, { ids });
-    if (!data.Page || !data.Page.media) return [];
-    return data.Page.media;
-  } catch (err) {
-    logger.error({ err, ids }, 'Failed to fetch AniList media by IDs');
-    return [];
-  }
-}
-
 router.post('/recommendations', validate(recommendationsSchema, 'body'), asyncHandler(async (req, res) => {
   const { logger } = req;
   const { bookmarks = [] } = req.body;
@@ -609,63 +563,56 @@ router.post('/recommendations', validate(recommendationsSchema, 'body'), asyncHa
   const cacheKey = generateCacheKey(bookmarks);
   const cached = await getCache(cacheKey);
   if (cached) {
-    logger.info({ cacheKey }, 'Recommendations cache hit');
     return res.json(cached);
   }
 
-  logger.info({ cacheKey, count: bookmarks.length }, 'Recommendations cache miss, fetching from Groq');
+  const bookmarkInfo = bookmarks.map(b => {
+    const title = b.title || b.media?.title || 'Unknown';
+    const genres = b.genres || b.media?.genres || [];
+    const category = b.category || b.media?.category || 'anime';
+    return `${title} (${category}${genres.length ? `, genres: ${genres.join(', ')}` : ''})`;
+  }).join('\n');
 
-  const recommendedIds = await fetchRecommendationsFromGroq(bookmarks, logger);
+  const prompt = `You are an expert in anime and tokusatsu recommendations. Based on the user's following bookmarks, suggest 6 similar titles they might enjoy.
 
-  if (!recommendedIds.length) {
+Bookmarks:
+${bookmarkInfo}
+
+Return ONLY JSON in this shape:
+{ "titles": ["Title 1", "Title 2", "Title 3", "Title 4", "Title 5", "Title 6"] }`;
+
+  let titles = [];
+  try {
+    const response = await callGroq(prompt, logger);
+    if (response && Array.isArray(response.titles)) {
+      titles = response.titles.filter(t => typeof t === 'string' && t.length > 0 && t.length < 200);
+    }
+  } catch (err) {
+    logger.error({ err }, 'Groq recommendation fetch failed');
     return res.json({ items: [] });
   }
 
-  const rawMedia = await fetchAniListMediaByIds(recommendedIds, logger);
-  if (!rawMedia.length) {
+  if (!titles.length) {
     return res.json({ items: [] });
   }
 
-  const items = rawMedia.map(item => {
-    const normalized = normalizeAniListMedia(item, 'anime', []);
-    return mediaToCard(normalized);
-  }).filter(Boolean);
+  const resolved = await Promise.all(titles.map(async (t) => {
+    try {
+      const shikimoriResults = await searchShikimori(t);
+      if (shikimoriResults && shikimoriResults.length > 0) {
+        const normalized = normalizeShikimoriMedia(shikimoriResults[0], 'anime');
+        return mediaToCard(normalized);
+      }
+    } catch (err) {
+      logger.warn({ err, title: t }, 'Shikimori resolution failed for recommendation');
+    }
+    return null;
+  }));
 
+  const items = resolved.filter(Boolean);
   const responseData = { items };
 
   await setCache(cacheKey, responseData, 86400);
-
-  res.json(responseData);
-}));
-
-function getAISearchCacheKey(prompt) {
-  const normalized = prompt.trim().toLowerCase();
-  const hash = crypto.createHash('sha256').update(normalized).digest('hex');
-  return `ai-search:v1:${hash}`;
-}
-
-router.post('/ai-search', validate(aiSearchSchema, 'body'), asyncHandler(async (req, res) => {
-  const { logger } = req;
-  if (!process.env.GROQ_API_KEY) {
-    logger.warn('GROQ_API_KEY not set, AI search disabled');
-    throw new ApiError(503, 'Groq not configured', 'GROQ_NOT_CONFIGURED');
-  }
-
-  const { prompt } = req.body;
-
-  const cacheKey = getAISearchCacheKey(prompt);
-  const cached = await getCache(cacheKey);
-  if (cached) {
-    logger.info({ cacheKey }, 'AI search cache hit');
-    return res.json(cached);
-  }
-
-  logger.info({ cacheKey }, 'AI search cache miss, calling Groq');
-  const result = await callGroq(`Parse this user media search prompt into structured JSON filters: "${prompt}"`, logger);
-  const responseData = { success: true, filters: result };
-
-  await setCache(cacheKey, responseData, 86400);
-
   res.json(responseData);
 }));
 
