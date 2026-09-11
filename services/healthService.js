@@ -2,7 +2,7 @@ const { TMDB_API_KEY, TORRENTCLAW_API_KEY } = require('../config');
 const { kv } = require('@vercel/kv');
 const logger = require('./logger');
 
-const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const USER_AGENT = 'KITO/1.0';
 
 async function checkTmdb() {
   if (!TMDB_API_KEY) return 'missing_key';
@@ -17,26 +17,38 @@ async function checkTmdb() {
   }
 }
 
-async function checkAnilist() {
+async function checkShikimori() {
   try {
-    const res = await fetch('https://graphql.anilist.co', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'User-Agent': USER_AGENT
-      },
-      body: JSON.stringify({
-        query: 'query { Media(id: 1) { id } }'
-      }),
-      signal: AbortSignal.timeout(5000)
+    const res = await fetch('https://shikimori.one/api/animes?limit=1', {
+      signal: AbortSignal.timeout(5000),
+      headers: { 'User-Agent': USER_AGENT }
     });
-    if (res.status === 429) return 'rate_limited';
-    if (res.ok) return 'ok';
-    logger.warn({ status: res.status }, 'AniList health check returned non-ok status');
-    return 'error';
-  } catch (err) {
-    logger.warn({ err }, 'AniList health check failed');
+    return res.ok ? 'ok' : 'error';
+  } catch {
+    return 'timeout';
+  }
+}
+
+async function checkJikan() {
+  try {
+    const res = await fetch('https://api.jikan.moe/v4/anime?q=naruto&limit=1', {
+      signal: AbortSignal.timeout(5000),
+      headers: { 'User-Agent': USER_AGENT }
+    });
+    return res.ok ? 'ok' : 'error';
+  } catch {
+    return 'timeout';
+  }
+}
+
+async function checkKitsu() {
+  try {
+    const res = await fetch('https://kitsu.io/api/edge/anime?filter[text]=naruto&page[limit]=1', {
+      signal: AbortSignal.timeout(5000),
+      headers: { 'Accept': 'application/vnd.api+json' }
+    });
+    return res.ok ? 'ok' : 'error';
+  } catch {
     return 'timeout';
   }
 }
@@ -80,4 +92,4 @@ async function checkKv() {
   }
 }
 
-module.exports = { checkTmdb, checkAnilist, checkTorrentclaw, checkNyaa, checkKv };
+module.exports = { checkTmdb, checkShikimori, checkJikan, checkKitsu, checkTorrentclaw, checkNyaa, checkKv };
