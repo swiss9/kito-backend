@@ -7,9 +7,10 @@ const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 const { Ratelimit } = require('@upstash/ratelimit');
 const { errorHandler } = require('./middleware/errorHandler');
-const { checkTmdb, checkAnilist, checkTorrentclaw, checkNyaa, checkKv } = require('./services/healthService');
+const { checkTmdb, checkShikimori, checkJikan, checkKitsu, checkTorrentclaw, checkNyaa, checkKv } = require('./services/healthService');
 const { clearAllCache, deleteCache, getCache, setCache } = require('./services/cacheService');
 const { isValidAdminToken } = require('./utils');
+const { searchShikimori, searchJikan, searchKitsu, normalizeShikimoriMedia, normalizeJikanMedia, normalizeKitsuMedia } = require('./services/metadataService');
 const redisClient = require('./services/redisClient');
 const logger = require('./services/logger');
 
@@ -142,22 +143,112 @@ app.delete('/api/admin/cache', adminLimiter, async (req, res) => {
   }
 });
 
+const RECOMMENDED_CACHE_VERSION = 2;
+const RECOMMENDED_TTL_RESOLVED = 31536000;
+const RECOMMENDED_TTL_UNRESOLVED = 3600;
+
 const DEFAULT_RECOMMENDED = [
-  { id: 'anilist:30', title: 'Neon Genesis Evangelion', subtitle: '1995 Â· 26 eps Â· Action, Drama, Sci-Fi', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx30-gJXjqBtvgs9y.jpg', provider: 'anilist', providerId: '30', hasRelease: true, hasBatch: false, collection: false },
+  { id: '', title: 'Neon Genesis Evangelion', subtitle: '1995 Â· 26 eps Â· Action, Drama, Sci-Fi', category: 'anime', poster: '', provider: 'shikimori', providerId: '', hasRelease: true, hasBatch: false, collection: false },
   { id: 'tmdb:239741', title: 'Kamen Rider Kuuga', subtitle: '2000 Â· 49 eps Â· Action, Adventure, Drama', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/86L7SWkabVrSJAYpYbyryl4q2mU.jpg', provider: 'tmdb', providerId: '239741', hasRelease: true, hasBatch: false, collection: false },
-  { id: 'anilist:51009', title: 'Fullmetal Alchemist: Brotherhood', subtitle: '2009 Â· 64 eps Â· Action, Adventure, Drama', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx51009-8IjrnnC8ZwYd.jpg', provider: 'anilist', providerId: '51009', hasRelease: true, hasBatch: false, collection: false },
+  { id: '', title: 'Fullmetal Alchemist: Brotherhood', subtitle: '2009 Â· 64 eps Â· Action, Adventure, Drama', category: 'anime', poster: '', provider: 'shikimori', providerId: '', hasRelease: true, hasBatch: false, collection: false },
   { id: 'tmdb:139653', title: 'Kamen Rider Build', subtitle: '2017 Â· 49 eps Â· Action, Comedy, Drama', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/t7eAwG1qYxoeNxyUfaM4NqxAkGy.jpg', provider: 'tmdb', providerId: '139653', hasRelease: true, hasBatch: false, collection: false },
   { id: 'tmdb:71925', title: 'Ultraman Tiga', subtitle: '1996 Â· 52 eps Â· Action, Adventure, Sci-Fi', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/7pCjKEWPqlB64WaVHrmWKKT0jqR.jpg', provider: 'tmdb', providerId: '71925', hasRelease: true, hasBatch: false, collection: false },
-  { id: 'anilist:23', title: 'Cowboy Bebop', subtitle: '1998 Â· 26 eps Â· Action, Adventure, Drama', category: 'anime', poster: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx23-WBquk23FslmQ.jpg', provider: 'anilist', providerId: '23', hasRelease: true, hasBatch: false, collection: false }
+  { id: '', title: 'Cowboy Bebop', subtitle: '1998 Â· 26 eps Â· Action, Adventure, Drama', category: 'anime', poster: '', provider: 'shikimori', providerId: '', hasRelease: true, hasBatch: false, collection: false }
 ];
+
+async function resolveRecommendedAnimeEntries(items) {
+  const providers = [
+    { search: searchShikimori, normalize: normalizeShikimoriMedia, name: 'shikimori' },
+    { search: searchJikan, normalize: normalizeJikanMedia, name: 'jikan' },
+    { search: searchKitsu, normalize: normalizeKitsuMedia, name: 'kitsu' }
+  ];
+
+  for (const provider of providers) {
+    const resolved = await tryResolveWithProvider(items, provider);
+    if (resolved) {
+      logger.info({ provider: provider.name }, 'Recommended enrichment resolved');
+      return resolved;
+    }
+    logger.warn({ provider: provider.name }, 'Recommended enrichment provider unavailable, trying next');
+  }
+
+  return items;
+}
+
+async function tryResolveWithProvider(items, provider) {
+  const results = await Promise.all(items.map(async (item) => {
+    if (item.category !== 'anime') return item;
+    if (item.providerId && item.poster) return item;
+
+    try {
+      const raw = await provider.search(item.title);
+      if (!raw || raw.length === 0) return null;
+      const normalized = provider.normalize(raw[0], 'anime');
+      if (!normalized) return null;
+      return {
+        ...item,
+        id: normalized.id,
+        provider: provider.name,
+        providerId: normalized.providerId,
+        poster: normalized.poster || item.poster
+      };
+    } catch (err) {
+      return null;
+    }
+  }));
+
+  const anyAnimeSucceeded = results.some((r, i) =>
+    items[i].category === 'anime' && r !== null && r.providerId
+  );
+
+  if (!anyAnimeSucceeded) return null;
+
+  return results.map((r, i) => (r === null ? items[i] : r));
+}
+
+function isAnimeResolved(entry) {
+  return entry.category !== 'anime' || (entry.providerId && entry.provider === 'shikimori');
+}
+
+function hasUnresolvedAnime(items) {
+  return items.some(entry => !isAnimeResolved(entry));
+}
 
 app.get('/api/recommended', async (req, res) => {
   try {
-    let shows = await getCache('recommended_shows');
-    if (!shows) {
-      await setCache('recommended_shows', DEFAULT_RECOMMENDED, 86400);
-      shows = DEFAULT_RECOMMENDED;
+    const cached = await getCache('recommended_shows');
+    let shows = null;
+
+    if (
+      cached &&
+      !Array.isArray(cached) &&
+      cached.version === RECOMMENDED_CACHE_VERSION &&
+      Array.isArray(cached.items) &&
+      cached.items.length > 0
+    ) {
+      shows = cached.items;
     }
+
+    if (!shows) {
+      const resolved = await resolveRecommendedAnimeEntries(DEFAULT_RECOMMENDED);
+      if (resolved && resolved.length > 0) {
+        shows = resolved;
+        const unresolved = hasUnresolvedAnime(resolved);
+        const ttl = unresolved ? RECOMMENDED_TTL_UNRESOLVED : RECOMMENDED_TTL_RESOLVED;
+        await setCache(
+          'recommended_shows',
+          { version: RECOMMENDED_CACHE_VERSION, items: shows },
+          ttl
+        );
+        req.logger?.info(
+          { ttl, unresolved, count: shows.length },
+          'Recommended cache written'
+        );
+      } else {
+        shows = DEFAULT_RECOMMENDED;
+      }
+    }
+
     res.json({ items: shows });
   } catch (err) {
     req.logger?.error({ err }, 'Failed to fetch recommended shows');
@@ -178,15 +269,17 @@ function withTimeout(promise, ms, fallback) {
 }
 
 app.get('/api/health', async (req, res) => {
-  const [tmdb, anilist, torrentclaw, nyaa, kv] = await Promise.all([
+  const [tmdb, shikimori, jikan, kitsu, torrentclaw, nyaa, kv] = await Promise.all([
     withTimeout(checkTmdb(), 2500, 'timeout'),
-    withTimeout(checkAnilist(), 2500, 'timeout'),
+    withTimeout(checkShikimori(), 2500, 'timeout'),
+    withTimeout(checkJikan(), 2500, 'timeout'),
+    withTimeout(checkKitsu(), 2500, 'timeout'),
     withTimeout(checkTorrentclaw(), 2500, 'timeout'),
     withTimeout(checkNyaa(), 2500, 'timeout'),
     withTimeout(checkKv(), 2500, 'timeout')
   ]);
 
-  const checks = { tmdb, anilist, torrentclaw, nyaa, kv };
+  const checks = { tmdb, shikimori, jikan, kitsu, torrentclaw, nyaa, kv };
   const healthy = Object.values(checks).every(c => c === 'ok');
   res.status(200).json({ status: healthy ? 'ok' : 'degraded', checks });
 });
