@@ -1,7 +1,7 @@
 const { httpGet, httpPost } = require('./httpClient');
 const logger = require('./logger');
 const { getCache, setCache } = require('./cacheService');
-const { searchShikimori, normalizeShikimoriMedia } = require('./shikimoriService');
+const { searchShikimori, normalizeShikimoriMedia, fetchShikimori } = require('./shikimoriService');
 
 const KITSU_API = 'https://kitsu.io/api/edge';
 const JIKAN_API = 'https://api.jikan.moe/v4';
@@ -330,6 +330,7 @@ module.exports = {
   searchKitsu,
   searchJikan,
   searchShikimori,
+  fetchShikimori,
   normalizeKitsuMedia,
   normalizeAniListMedia,
   normalizeJikanMedia,
