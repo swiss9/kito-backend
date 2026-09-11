@@ -1,5 +1,7 @@
 const logger = require('./logger');
 
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
 async function httpGet(url, options = {}) {
   const maxRetries = options.maxRetries ?? 1;
   const timeoutMs = options.timeoutMs ?? 5000;
@@ -9,6 +11,10 @@ async function httpGet(url, options = {}) {
     try {
       const res = await fetch(url, {
         ...options,
+        headers: {
+          'User-Agent': USER_AGENT,
+          ...(options.headers || {})
+        },
         signal: options.signal || AbortSignal.timeout(timeoutMs)
       });
 
@@ -48,7 +54,12 @@ async function httpPost(url, body, options = {}) {
     try {
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...options.headers },
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'User-Agent': USER_AGENT,
+          ...(options.headers || {})
+        },
         body: JSON.stringify(body),
         signal: options.signal || AbortSignal.timeout(timeoutMs)
       });
