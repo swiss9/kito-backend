@@ -6,7 +6,7 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
 const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, MediaType, QUERY_CORRECTIONS, TOKUSATSU_FRANCHISES } = require('../config');
-const { fetchAniList, fetchTmdb, searchKitsu, normalizeAniListMedia, normalizeKitsuMedia, normalizeTmdbMedia, mediaToCard } = require('../services/metadataService');
+const { fetchAniList, fetchTmdb, searchKitsu, searchJikan, searchShikimori, normalizeAniListMedia, normalizeKitsuMedia, normalizeJikanMedia, normalizeTmdbMedia, normalizeShikimoriMedia, mediaToCard } = require('../services/metadataService');
 const { parseQueryIntent } = require('../services/queryIntentService');
 const { rankSearchResults } = require('../services/searchRankingService');
 const { httpGet } = require('../services/httpClient');
@@ -346,85 +346,36 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
 
     if (catId === 'anime') {
       let items = [];
-      let pageNum = 1;
-      const maxPages = 2;
-      const perPageAni = 20;
-      const seenIds = new Set();
 
-      while (pageNum <= maxPages) {
+      try {
+        const shikimoriResults = await searchShikimori(normalizedQuery);
+        if (shikimoriResults.length > 0) {
+          items = shikimoriResults.map(item => mediaToCard(item)).filter(Boolean);
+          logger.info({ count: items.length, provider: 'shikimori' }, 'Shikimori results');
+        }
+      } catch (err) {
+        logger.warn({ err, provider: 'shikimori' }, 'Shikimori search failed');
+      }
+
+      if (items.length === 0) {
         try {
-          const query = `
-            query($search: String, $type: MediaType, $page: Int, $perPage: Int) {
-              Page(page: $page, perPage: $perPage) {
-                pageInfo { hasNextPage }
-                media(search: $search, type: $type, sort: SEARCH_MATCH) {
-                  id
-                  title { romaji english native }
-                  synonyms
-                  seasonYear
-                  coverImage { medium large }
-                  format
-                  episodes
-                  chapters
-                  status
-                  genres
-                  isAdult
-                  popularity
-                  countryOfOrigin
-                  relations {
-                    edges {
-                      relationType
-                      node {
-                        id
-                        title { romaji english native }
-                        format
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          `;
-          const variables = { search: normalizedQuery, type: 'ANIME', page: pageNum, perPage: perPageAni };
-          const data = await fetchAniList(query, variables);
-          if (!data || !data.Page) {
-            logger.warn({ pageNum, provider: 'anilist' }, 'AniList returned null or missing Page');
-            break;
+          const jikanItems = await searchJikan(normalizedQuery);
+          if (jikanItems.length > 0) {
+            items = jikanItems.map(item => mediaToCard(item)).filter(Boolean);
+            logger.info({ count: items.length, provider: 'jikan' }, 'Jikan fallback results');
           }
-          const rawItems = data.Page.media || [];
-          if (!rawItems.length) break;
-          const mapped = rawItems
-            .map(item => {
-              const relations = (item.relations?.edges || []).map(edge => ({
-                relationType: edge.relationType,
-                node: {
-                  id: edge.node.id,
-                  title: edge.node.title?.romaji || edge.node.title?.english || edge.node.title?.native || 'Unknown',
-                  format: edge.node.format
-                }
-              }));
-              return mediaToCard(normalizeAniListMedia(item, catId, relations));
-            })
-            .filter(item => item && item.status !== 'NOT_YET_RELEASED' && !item.isAdult);
-          for (const item of mapped) {
-            if (!seenIds.has(item.id)) {
-              seenIds.add(item.id);
-              items.push(item);
-            }
-          }
-          if (!data.Page.pageInfo.hasNextPage) break;
-          pageNum++;
         } catch (err) {
-          logger.warn({ err, pageNum, provider: 'anilist' }, 'AniList search page failed');
-          break;
+          logger.warn({ err, provider: 'jikan' }, 'Jikan search failed');
         }
       }
 
       if (items.length === 0) {
         try {
           const kitsuItems = await searchKitsu(normalizedQuery);
-          items = kitsuItems.map(item => mediaToCard(item)).filter(Boolean);
-          logger.info({ count: items.length, provider: 'kitsu' }, 'Kitsu fallback results');
+          if (kitsuItems.length > 0) {
+            items = kitsuItems.map(item => mediaToCard(item)).filter(Boolean);
+            logger.info({ count: items.length, provider: 'kitsu' }, 'Kitsu fallback results');
+          }
         } catch (err) {
           logger.warn({ err, provider: 'kitsu' }, 'Kitsu search failed');
         }
@@ -432,7 +383,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
 
       if (items.length === 0 && process.env.TMDB_API_KEY) {
         try {
-          let tmdbResults = await fetchTmdb('search/tv', { query: normalizedQuery, page: 1 });
+          const tmdbResults = await fetchTmdb('search/tv', { query: normalizedQuery, page: 1 });
           const tmdbAnimeResults = tmdbResults.filter(i =>
             i.genre_ids?.includes(16) &&
             i.original_language === 'ja' &&
@@ -440,27 +391,17 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
           );
           if (tmdbAnimeResults.length) {
             items = tmdbAnimeResults.map(item => mediaToCard(normalizeTmdbMedia(item, catId))).filter(Boolean);
-          } else {
-            const movieResults = await fetchTmdb('search/movie', { query: normalizedQuery, page: 1 });
-            const movieAnime = movieResults.filter(i =>
-              i.genre_ids?.includes(16) &&
-              i.original_language === 'ja' &&
-              i.origin_country?.includes('JP')
-            );
-            if (movieAnime.length) {
-              items = movieAnime.map(item => mediaToCard(normalizeTmdbMedia(item, catId))).filter(Boolean);
-            }
+            logger.info({ count: items.length, provider: 'tmdb' }, 'TMDB final fallback');
           }
-          logger.info({ count: items.length, provider: 'tmdb' }, 'TMDB fallback results');
         } catch (err) {
-          logger.warn({ err, provider: 'tmdb' }, 'TMDB fallback failed');
+          logger.warn({ err, provider: 'tmdb' }, 'TMDB final fallback failed');
         }
       }
 
       if (items.length > 0) {
-        logger.info({ count: items.length, provider: 'anime', category: catId }, 'Search results found for anime category');
+        logger.info({ count: items.length, category: catId }, 'Search results found for anime');
       } else {
-        logger.warn({ query: normalizedQuery, category: catId }, 'No results found for anime category');
+        logger.warn({ query: normalizedQuery, category: catId }, 'No results found for anime');
       }
 
       allResults.push(...items);
