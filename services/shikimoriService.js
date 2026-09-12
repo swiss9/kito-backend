@@ -69,6 +69,16 @@ async function searchShikimori(query) {
   }
 }
 
+function toAliasArray(value) {
+  if (Array.isArray(value)) {
+    return value.filter(v => typeof v === 'string' && v.length > 0);
+  }
+  if (typeof value === 'string' && value.length > 0) {
+    return [value];
+  }
+  return [];
+}
+
 function normalizeShikimoriMedia(item, category) {
   if (!item) return null;
   const year = item.aired_on ? parseInt(item.aired_on.slice(0, 4)) : null;
@@ -78,10 +88,15 @@ function normalizeShikimoriMedia(item, category) {
       ? `https://shikimori.one${item.image.preview}`
       : '';
 
+  const nameValues = toAliasArray(item.name);
+  const englishValues = toAliasArray(item.english);
+  const japaneseValues = toAliasArray(item.japanese);
+  const aliases = [...new Set([...nameValues, ...englishValues, ...japaneseValues])];
+
   return {
     id: `shikimori:${item.id}`,
-    title: item.name || item.english || item.japanese || 'Unknown',
-    aliases: [item.name, item.english, item.japanese].filter(Boolean),
+    title: nameValues[0] || englishValues[0] || japaneseValues[0] || 'Unknown',
+    aliases,
     year,
     poster,
     mediaType: item.kind === 'movie' ? 'movie' : 'series',
