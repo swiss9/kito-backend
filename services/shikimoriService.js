@@ -63,8 +63,20 @@ async function searchShikimori(query) {
     const candidates = data.filter(item =>
       item.kind && Object.prototype.hasOwnProperty.call(KIND_PRIORITY, item.kind)
     );
+    if (candidates.length === 0) return [];
 
-    const sorted = candidates.sort((a, b) => {
+    const normalizedQuery = query.toLowerCase().trim();
+
+    const exactMatches = candidates.filter(item => {
+      const names = [item.name, item.russian]
+        .filter(Boolean)
+        .map(n => n.toLowerCase().trim());
+      return names.includes(normalizedQuery);
+    });
+
+    const pool = exactMatches.length > 0 ? exactMatches : candidates;
+
+    const sorted = pool.sort((a, b) => {
       const aP = KIND_PRIORITY[a.kind] || 0;
       const bP = KIND_PRIORITY[b.kind] || 0;
       if (aP !== bP) return bP - aP;
