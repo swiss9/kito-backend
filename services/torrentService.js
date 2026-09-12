@@ -11,6 +11,7 @@ const STOP_WORDS_QUERY = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'to', 'in
 function generateQueryTiers(media, logger) {
   const log = logger || rootLogger;
   const titles = [media.title, ...(media.aliases || [])]
+    .filter(t => typeof t === 'string' && t.length > 0)
     .map(t => t.replace(/[:/]/g, ' ').replace(/[^\w\s]/g, '').trim())
     .filter(Boolean);
 
