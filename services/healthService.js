@@ -29,18 +29,6 @@ async function checkShikimori() {
   }
 }
 
-async function checkJikan() {
-  try {
-    const res = await fetch('https://api.jikan.moe/v4/anime?q=naruto&limit=1', {
-      signal: AbortSignal.timeout(5000),
-      headers: { 'User-Agent': USER_AGENT }
-    });
-    return res.ok ? 'ok' : 'error';
-  } catch {
-    return 'timeout';
-  }
-}
-
 async function checkKitsu() {
   try {
     const res = await fetch('https://kitsu.io/api/edge/anime?filter[text]=naruto&page[limit]=1', {
@@ -92,4 +80,4 @@ async function checkKv() {
   }
 }
 
-module.exports = { checkTmdb, checkShikimori, checkJikan, checkKitsu, checkTorrentclaw, checkNyaa, checkKv };
+module.exports = { checkTmdb, checkShikimori, checkKitsu, checkTorrentclaw, checkNyaa, checkKv };
