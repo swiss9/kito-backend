@@ -9,6 +9,7 @@ function parseReleaseName(name) {
   const title = extractReleaseTitle(cleaned);
   const group = getReleaseGroup(name);
   return {
+    originalName: name,
     title,
     season,
     episodeInfo,
@@ -55,7 +56,8 @@ function extractEpisodeNumber(name) {
     /\bEpisode\s*(\d+)\b/i,
     /\bEP\s*(\d+)\b/i,
     /\b[Ee]P\s*(\d+)\b/i,
-    /\b#(\d+)\b/i
+    /\b#(\d+)\b/i,
+    /\s-\s(\d{1,3})(?![0-9])/
   ];
   for (const pat of patterns) {
     const match = name.match(pat);
