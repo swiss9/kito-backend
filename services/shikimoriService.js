@@ -1,12 +1,17 @@
 const logger = require('./logger');
+const { getCache, setCache } = require('./cacheService');
 
 const SHIKIMORI_API = 'https://shikimori.one/api';
 const USER_AGENT = 'KITO/1.0';
+const SEARCH_TTL_SECONDS = 21600;
+const CACHE_FETCH_LIMIT = 10;
 
 const requestQueue = [];
 let isProcessing = false;
 const MIN_INTERVAL_MS = 200;
 let lastRequestTime = 0;
+
+const inFlight = new Map();
 
 async function processQueue() {
   if (isProcessing || requestQueue.length === 0) return;
@@ -54,44 +59,65 @@ const KIND_PRIORITY = {
   movie: 30
 };
 
-async function searchShikimori(query) {
-  const url = `${SHIKIMORI_API}/animes?search=${encodeURIComponent(query)}&limit=10`;
-  try {
-    const data = await fetchShikimori(url);
-    if (!Array.isArray(data) || data.length === 0) return [];
+async function fetchAndCacheShikimoriSearch(query, cacheKey) {
+  const url = `${SHIKIMORI_API}/animes?search=${encodeURIComponent(query)}&limit=${CACHE_FETCH_LIMIT}`;
+  const data = await fetchShikimori(url);
 
-    const candidates = data.filter(item =>
-      item.kind && Object.prototype.hasOwnProperty.call(KIND_PRIORITY, item.kind)
-    );
-    if (candidates.length === 0) return [];
-
-    const normalizedQuery = query.toLowerCase().trim();
-
-    const exactMatches = candidates.filter(item => {
-      const names = [item.name, item.russian]
-        .filter(Boolean)
-        .map(n => n.toLowerCase().trim());
-      return names.includes(normalizedQuery);
-    });
-
-    const pool = exactMatches.length > 0 ? exactMatches : candidates;
-
-    const sorted = pool.sort((a, b) => {
-      const aP = KIND_PRIORITY[a.kind] || 0;
-      const bP = KIND_PRIORITY[b.kind] || 0;
-      if (aP !== bP) return bP - aP;
-      return (b.score || 0) - (a.score || 0);
-    });
-
-    const best = sorted[0];
-    if (!best) return [];
-
-    const detailUrl = `${SHIKIMORI_API}/animes/${best.id}`;
-    const detail = await fetchShikimori(detailUrl);
-    return [detail];
-  } catch (err) {
-    logger.warn({ err, query }, 'Shikimori search failed');
+  if (!Array.isArray(data) || data.length === 0) {
+    await setCache(cacheKey, [], SEARCH_TTL_SECONDS);
     return [];
+  }
+
+  const candidates = data.filter(item =>
+    item.kind && Object.prototype.hasOwnProperty.call(KIND_PRIORITY, item.kind)
+  );
+  if (candidates.length === 0) {
+    await setCache(cacheKey, [], SEARCH_TTL_SECONDS);
+    return [];
+  }
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const exactMatches = candidates.filter(item => {
+    const names = [item.name, item.russian]
+      .filter(Boolean)
+      .map(n => n.toLowerCase().trim());
+    return names.includes(normalizedQuery);
+  });
+
+  const pool = exactMatches.length > 0 ? exactMatches : candidates;
+
+  const sorted = pool.sort((a, b) => {
+    const aP = KIND_PRIORITY[a.kind] || 0;
+    const bP = KIND_PRIORITY[b.kind] || 0;
+    if (aP !== bP) return bP - aP;
+    return (b.score || 0) - (a.score || 0);
+  });
+
+  const results = sorted.slice(0, CACHE_FETCH_LIMIT);
+  await setCache(cacheKey, results, SEARCH_TTL_SECONDS);
+  return results;
+}
+
+async function searchShikimori(query, limit = 5) {
+  const normalizedQuery = query.trim().toLowerCase();
+  const cacheKey = `shikimori_search:${normalizedQuery}`;
+
+  const cached = await getCache(cacheKey);
+  if (cached) return cached.slice(0, limit);
+
+  if (inFlight.has(cacheKey)) {
+    const pending = await inFlight.get(cacheKey);
+    return pending.slice(0, limit);
+  }
+
+  const promise = fetchAndCacheShikimoriSearch(query, cacheKey);
+  inFlight.set(cacheKey, promise);
+
+  try {
+    const result = await promise;
+    return result.slice(0, limit);
+  } finally {
+    inFlight.delete(cacheKey);
   }
 }
 
@@ -115,21 +141,18 @@ function normalizeShikimoriMedia(item, category) {
       : '';
 
   const nameValues = toAliasArray(item.name);
-  const englishValues = toAliasArray(item.english);
-  const japaneseValues = toAliasArray(item.japanese);
-  const aliases = [...new Set([...nameValues, ...englishValues, ...japaneseValues])];
+  const russianValues = toAliasArray(item.russian);
+  const aliases = [...new Set([...nameValues, ...russianValues])];
 
   return {
     id: `shikimori:${item.id}`,
-    title: nameValues[0] || englishValues[0] || japaneseValues[0] || 'Unknown',
+    title: nameValues[0] || russianValues[0] || 'Unknown',
     aliases,
     year,
     poster,
     mediaType: item.kind === 'movie' ? 'movie' : 'series',
     episodeCount: item.episodes || null,
-    genres: (item.genres || []).map(g => g.russian || g.name),
     status: item.status || 'UNKNOWN',
-    isAdult: item.rating === 'r_plus' || item.rating === 'rx',
     provider: 'shikimori',
     providerId: String(item.id),
     category,
