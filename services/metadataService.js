@@ -1,49 +1,78 @@
-const { httpGet, httpPost } = require('./httpClient');
+const { httpGet } = require('./httpClient');
 const logger = require('./logger');
 const { getCache, setCache } = require('./cacheService');
 const { searchShikimori, normalizeShikimoriMedia, fetchShikimori } = require('./shikimoriService');
 
 const KITSU_API = 'https://kitsu.io/api/edge';
+const KITSU_TTL_SECONDS = 21600;
+const TMDB_TTL_SECONDS = 86400;
+const CACHE_FETCH_LIMIT = 10;
 
-async function searchKitsu(query) {
-  const cacheKey = `kitsu_search:${query.toLowerCase().trim()}`;
+const kitsuInFlight = new Map();
+
+async function fetchAndCacheKitsuSearch(query, cacheKey) {
+  const url = `${KITSU_API}/anime?filter[text]=${encodeURIComponent(query)}&page[limit]=${CACHE_FETCH_LIMIT}`;
+  const res = await httpGet(url, {
+    headers: { 'Accept': 'application/vnd.api+json' },
+    timeoutMs: 4000,
+    maxRetries: 0
+  });
+
+  if (!res.ok) {
+    throw new Error(`Kitsu HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+  const items = data.data || [];
+
+  if (items.length === 0) {
+    await setCache(cacheKey, [], KITSU_TTL_SECONDS);
+    return [];
+  }
+
+  const candidates = items.filter(item =>
+    item.attributes?.showType && ['TV', 'movie', 'OVA', 'ONA', 'special'].includes(item.attributes.showType)
+  );
+  if (candidates.length === 0) {
+    await setCache(cacheKey, [], KITSU_TTL_SECONDS);
+    return [];
+  }
+
+  const sorted = candidates.sort((a, b) => {
+    const aScore = (a.attributes?.episodeCount || 0) * 10 + (a.attributes?.averageRating ? parseFloat(a.attributes.averageRating) : 0);
+    const bScore = (b.attributes?.episodeCount || 0) * 10 + (b.attributes?.averageRating ? parseFloat(b.attributes.averageRating) : 0);
+    return bScore - aScore;
+  });
+
+  const normalized = sorted
+    .slice(0, CACHE_FETCH_LIMIT)
+    .map(item => normalizeKitsuMedia(item))
+    .filter(Boolean);
+
+  await setCache(cacheKey, normalized, KITSU_TTL_SECONDS);
+  return normalized;
+}
+
+async function searchKitsu(query, limit = 5) {
+  const normalizedQuery = query.trim().toLowerCase();
+  const cacheKey = `kitsu_search:${normalizedQuery}`;
+
   const cached = await getCache(cacheKey);
-  if (cached) return cached;
+  if (cached) return cached.slice(0, limit);
+
+  if (kitsuInFlight.has(cacheKey)) {
+    const pending = await kitsuInFlight.get(cacheKey);
+    return pending.slice(0, limit);
+  }
+
+  const promise = fetchAndCacheKitsuSearch(query, cacheKey);
+  kitsuInFlight.set(cacheKey, promise);
 
   try {
-    const url = `${KITSU_API}/anime?filter[text]=${encodeURIComponent(query)}&page[limit]=10`;
-    const res = await httpGet(url, {
-      headers: { 'Accept': 'application/vnd.api+json' }
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    const items = data.data || [];
-    if (items.length === 0) return [];
-
-    const candidates = items.filter(item =>
-      item.attributes?.showType && ['TV', 'movie', 'OVA', 'ONA', 'special'].includes(item.attributes.showType)
-    );
-    if (candidates.length === 0) return [];
-
-    const sorted = candidates.sort((a, b) => {
-      const aScore = (a.attributes?.episodeCount || 0) * 10 + (a.attributes?.averageRating ? parseFloat(a.attributes.averageRating) : 0);
-      const bScore = (b.attributes?.episodeCount || 0) * 10 + (b.attributes?.averageRating ? parseFloat(b.attributes.averageRating) : 0);
-      return bScore - aScore;
-    });
-
-    const best = sorted[0];
-    const detailUrl = `${KITSU_API}/anime/${best.id}`;
-    const detailRes = await httpGet(detailUrl, {
-      headers: { 'Accept': 'application/vnd.api+json' }
-    });
-    const detailData = await detailRes.json();
-    const normalized = normalizeKitsuMedia(detailData.data);
-
-    await setCache(cacheKey, normalized ? [normalized] : [], 43200);
-    return normalized ? [normalized] : [];
-  } catch (err) {
-    logger.warn({ err, query }, 'Kitsu search failed');
-    return [];
+    const result = await promise;
+    return result.slice(0, limit);
+  } finally {
+    kitsuInFlight.delete(cacheKey);
   }
 }
 
@@ -56,10 +85,8 @@ function normalizeKitsuMedia(item) {
   const year = attrs.startDate ? parseInt(attrs.startDate.slice(0, 4)) : null;
   const episodeCount = attrs.episodeCount || null;
   const status = attrs.status || 'UNKNOWN';
-  const genres = (attrs.categories || []).map(c => c.title || c.name) || [];
   const popularity = attrs.popularityRank || 0;
   const aliases = [titles.en_jp, titles.ja_jp, ...(attrs.abbreviatedTitles || [])].filter(Boolean);
-  const isAdult = attrs.ageRating === 'R18' || attrs.ageRating === 'R18+' || false;
 
   return {
     id: `kitsu:${item.id}`,
@@ -69,10 +96,7 @@ function normalizeKitsuMedia(item) {
     poster,
     mediaType: attrs.showType === 'movie' ? 'movie' : 'series',
     episodeCount,
-    genres,
     status,
-    isAdult,
-    popularity,
     provider: 'kitsu',
     providerId: String(item.id),
     category: 'anime',
@@ -81,32 +105,6 @@ function normalizeKitsuMedia(item) {
     seasonNumber: null,
     seasonEpisodeCount: episodeCount,
     totalEpisodeCount: episodeCount
-  };
-}
-
-function normalizeAniListMedia(item, category, relations = []) {
-  if (!item) return null;
-  return {
-    id: `anilist:${item.id}`,
-    title: item.title?.romaji || item.title?.english || item.title?.native || 'Unknown',
-    aliases: [...(item.synonyms || []), item.title?.english, item.title?.native].filter(Boolean),
-    year: item.seasonYear,
-    poster: item.coverImage?.medium || item.coverImage?.large || '',
-    mediaType: item.format === 'MOVIE' ? 'movie' : 'series',
-    episodeCount: item.episodes || item.chapters || null,
-    genres: item.genres || [],
-    status: item.status || 'UNKNOWN',
-    isAdult: item.isAdult || false,
-    format: item.format,
-    provider: 'anilist',
-    providerId: String(item.id),
-    category,
-    relations,
-    countryOfOrigin: item.countryOfOrigin || 'JP',
-    popularity: item.popularity || 0,
-    seasonNumber: null,
-    seasonEpisodeCount: item.episodes || null,
-    totalEpisodeCount: item.episodes || null
   };
 }
 
@@ -122,9 +120,7 @@ function normalizeTmdbMedia(item, category) {
     poster: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : '',
     mediaType: mediaType === 'movie' ? 'movie' : 'series',
     episodeCount: item.number_of_episodes || null,
-    genres: (item.genres || []).map(g => g.name),
     status: item.status || 'UNKNOWN',
-    isAdult: item.adult || false,
     provider: 'tmdb',
     providerId: String(item.id),
     category,
@@ -142,18 +138,16 @@ function mediaToCard(media) {
   return {
     id: media.id,
     title: media.title,
-    subtitle: `${media.year || 'N/A'} Â· ${episodes} Â· ${(media.genres || []).slice(0, 3).join(', ')}`,
+    subtitle: `${media.year || 'N/A'} Â· ${episodes}`,
     category: media.category,
     poster: media.poster,
     provider: media.provider,
     providerId: media.providerId,
     year: media.year,
     episodeCount: media.episodeCount,
-    genres: media.genres,
     aliases: media.aliases,
     mediaType: media.mediaType,
     status: media.status,
-    isAdult: media.isAdult,
     hasRelease: false,
     hasBatch: false,
     popularity: media.popularity || 0,
@@ -177,61 +171,23 @@ async function fetchTmdb(endpoint, params = {}) {
 
   url.searchParams.set('api_key', process.env.TMDB_API_KEY);
 
-  const res = await httpGet(url.toString());
+  const res = await httpGet(url.toString(), {
+    timeoutMs: 4000,
+    maxRetries: 0
+  });
   if (!res.ok) throw new Error(`TMDB HTTP ${res.status}`);
   const data = await res.json();
   const result = data.results || data;
-  await setCache(cacheKey, result, 3600);
+  await setCache(cacheKey, result, TMDB_TTL_SECONDS);
   return result;
 }
 
-async function fetchAniList(query, variables) {
-  const { fetchAniListWithProxy } = require('./anilistProxy');
-  try {
-    const data = await fetchAniListWithProxy(query, variables);
-    return data.data;
-  } catch (err) {
-    logger.warn({ err, query: query.slice(0, 100) }, 'AniList request failed via proxy');
-    throw err;
-  }
-}
-
-async function searchAnilistByTitle(title) {
-  const query = `
-    query($search: String) {
-      Media(search: $search, type: ANIME) {
-        id
-        title { romaji english native }
-        synonyms
-        seasonYear
-        coverImage { medium large }
-        format
-        episodes
-        status
-        genres
-        isAdult
-        popularity
-      }
-    }
-  `;
-  try {
-    const data = await fetchAniList(query, { search: title });
-    return data.Media || null;
-  } catch (err) {
-    logger.warn({ err, title }, 'AniList search by title failed');
-    return null;
-  }
-}
-
 module.exports = {
-  fetchAniList,
-  searchAnilistByTitle,
   fetchTmdb,
   searchKitsu,
   searchShikimori,
   fetchShikimori,
   normalizeKitsuMedia,
-  normalizeAniListMedia,
   normalizeTmdbMedia,
   normalizeShikimoriMedia,
   mediaToCard
