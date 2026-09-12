@@ -6,11 +6,11 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
 const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, MediaType, QUERY_CORRECTIONS, TOKUSATSU_FRANCHISES } = require('../config');
-const { fetchAniList, fetchTmdb, searchKitsu, searchShikimori, normalizeAniListMedia, normalizeKitsuMedia, normalizeTmdbMedia, normalizeShikimoriMedia, mediaToCard } = require('../services/metadataService');
+const { fetchTmdb, searchKitsu, searchShikimori, normalizeKitsuMedia, normalizeTmdbMedia, normalizeShikimoriMedia, mediaToCard } = require('../services/metadataService');
 const { parseQueryIntent } = require('../services/queryIntentService');
 const { rankSearchResults } = require('../services/searchRankingService');
 const { httpGet } = require('../services/httpClient');
-const { stripSeasonInfo, normalizeTitle, escapeRegex, isValidAdminToken } = require('../utils');
+const { stripSeasonInfo, isValidAdminToken } = require('../utils');
 const { getFranchise } = require('../services/franchiseService');
 const logger = require('../services/logger');
 
@@ -52,8 +52,7 @@ function extractSeasonFromTitle(title) {
   if (romanMatch) return romanMap[romanMatch[1]];
   const patterns = [
     /[Ss]eason\s*(\d+)/i,
-    /S(\d+)\s*Complete/i,
-    /\b(\d+)$/
+    /S(\d+)\s*Complete/i
   ];
   for (const pat of patterns) {
     const match = clean.match(pat);
@@ -143,7 +142,7 @@ function groupByFranchise(items) {
       id: `franchise:${base}`,
       title: cleanTitle,
       aliases,
-      subtitle: `${seasons.length} seasons${minYear ? ` · ${minYear}${maxYear && maxYear !== minYear ? '–' + maxYear : ''}` : ''}`,
+      subtitle: `${seasons.length} seasons${minYear ? ` Â· ${minYear}${maxYear && maxYear !== minYear ? 'â€“' + maxYear : ''}` : ''}`,
       category: first.category,
       mediaType: 'collection',
       year: minYear,
@@ -185,8 +184,10 @@ async function fetchTmdbDiscoverWithKeyword(keywordId, page = 1) {
   url.searchParams.set('with_keywords', keywordId);
   url.searchParams.set('language', 'en-US');
   url.searchParams.set('page', page);
-  const res = await httpGet(url.toString(), { timeoutMs: 8000, maxRetries: 1 });
-  if (!res.ok) return [];
+  const res = await httpGet(url.toString(), { timeoutMs: 4000, maxRetries: 0 });
+  if (!res.ok) {
+    throw new Error(`TMDB discover HTTP ${res.status}`);
+  }
   const data = await res.json();
   return data.results || [];
 }
@@ -243,26 +244,13 @@ function deduplicateSearchResults(items) {
 
     if (merged.has(primaryKey)) {
       const existing = merged.get(primaryKey);
-      if (item.provider === 'anilist') {
-        existing.provider = 'anilist';
-        existing.providerId = item.providerId;
-        if (item.poster) existing.poster = item.poster;
-        if (item.subtitle) existing.subtitle = item.subtitle;
-        if (item.episodeCount) existing.episodeCount = item.episodeCount;
-        if (item.genres && item.genres.length > existing.genres.length) existing.genres = item.genres;
-        if (item.popularity && item.popularity > existing.popularity) existing.popularity = item.popularity;
-        if (item.aliases) existing.aliases = [...new Set([...existing.aliases, ...item.aliases])];
-        if (!existing.category && item.category) existing.category = item.category;
-        if (item.countryOfOrigin && !existing.countryOfOrigin) existing.countryOfOrigin = item.countryOfOrigin;
-      } else if (item.provider === 'tmdb' && existing.provider !== 'anilist') {
+      if (item.provider === 'tmdb' && existing.provider !== 'tmdb') {
         if (item.poster && !existing.poster) existing.poster = item.poster;
         if (item.subtitle && !existing.subtitle) existing.subtitle = item.subtitle;
         if (item.episodeCount && !existing.episodeCount) existing.episodeCount = item.episodeCount;
-        if (item.genres && item.genres.length > existing.genres.length) existing.genres = item.genres;
         if (item.popularity && item.popularity > existing.popularity) existing.popularity = item.popularity;
         if (item.aliases) existing.aliases = [...new Set([...existing.aliases, ...item.aliases])];
         if (!existing.category && item.category) existing.category = item.category;
-        if (item.origin_country && !existing.origin_country) existing.origin_country = item.origin_country;
       }
     } else {
       merged.set(primaryKey, { ...item });
@@ -285,19 +273,12 @@ function deduplicateSearchResults(items) {
         const nonFranchiseTokens1 = getNonFranchiseTokens(item.title, franchise);
         const nonFranchiseTokens2 = getNonFranchiseTokens(existing.title, franchise);
         const commonNonFranchise = nonFranchiseTokens1.filter(t => nonFranchiseTokens2.includes(t));
-        if (commonNonFranchise.length > 0) {
-          if (item.provider === 'anilist') {
-            existing.provider = 'anilist';
-            existing.providerId = item.providerId;
-            if (item.poster) existing.poster = item.poster;
-            if (item.subtitle) existing.subtitle = item.subtitle;
-            if (item.episodeCount) existing.episodeCount = item.episodeCount;
-            if (item.genres && item.genres.length > existing.genres.length) existing.genres = item.genres;
-            if (item.popularity && item.popularity > existing.popularity) existing.popularity = item.popularity;
-            if (item.aliases) existing.aliases = [...new Set([...existing.aliases, ...item.aliases])];
-            if (!existing.category && item.category) existing.category = item.category;
-            if (item.countryOfOrigin && !existing.countryOfOrigin) existing.countryOfOrigin = item.countryOfOrigin;
-          }
+        if (commonNonFranchise.length > 0 && item.provider === 'tmdb' && existing.provider !== 'tmdb') {
+          existing.provider = 'tmdb';
+          existing.providerId = item.providerId;
+          if (item.poster) existing.poster = item.poster;
+          if (item.subtitle) existing.subtitle = item.subtitle;
+          if (item.episodeCount) existing.episodeCount = item.episodeCount;
         }
       }
     } else {
@@ -339,6 +320,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
 
   const categories = category === 'any' ? getCategories() : [category];
   let allResults = [];
+  let anyProviderFailed = false;
 
   for (const catId of categories) {
     const config = getCategory(catId);
@@ -348,7 +330,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
       let items = [];
 
       try {
-        const shikimoriResults = await searchShikimori(normalizedQuery);
+        const shikimoriResults = await searchShikimori(normalizedQuery, 5);
         if (shikimoriResults.length > 0) {
           items = shikimoriResults
             .map(item => normalizeShikimoriMedia(item, 'anime'))
@@ -358,17 +340,19 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
           logger.info({ count: items.length, provider: 'shikimori' }, 'Shikimori results');
         }
       } catch (err) {
+        anyProviderFailed = true;
         logger.warn({ err, provider: 'shikimori' }, 'Shikimori search failed');
       }
 
       if (items.length === 0) {
         try {
-          const kitsuItems = await searchKitsu(normalizedQuery);
+          const kitsuItems = await searchKitsu(normalizedQuery, 5);
           if (kitsuItems.length > 0) {
             items = kitsuItems.map(item => mediaToCard(item)).filter(Boolean);
             logger.info({ count: items.length, provider: 'kitsu' }, 'Kitsu fallback results');
           }
         } catch (err) {
+          anyProviderFailed = true;
           logger.warn({ err, provider: 'kitsu' }, 'Kitsu search failed');
         }
       }
@@ -386,6 +370,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
             logger.info({ count: items.length, provider: 'tmdb' }, 'TMDB final fallback');
           }
         } catch (err) {
+          anyProviderFailed = true;
           logger.warn({ err, provider: 'tmdb' }, 'TMDB final fallback failed');
         }
       }
@@ -401,7 +386,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
 
     if (catId === 'tokusatsu') {
       if (category === 'any' && !TOKUSATSU_FRANCHISES.some(f => normalizedQ.includes(f))) {
-        logger.info({ query: normalizedQuery }, 'Skipping tokusatsu search – query does not match any tokusatsu franchise');
+        logger.info({ query: normalizedQuery }, 'Skipping tokusatsu search â€“ query does not match any tokusatsu franchise');
         continue;
       }
 
@@ -409,34 +394,29 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
 
       try {
         let tokusatsuItems = [];
-        let page = 1;
-        const maxPages = 2;
-        while (page <= maxPages) {
-          const results = await fetchTmdbDiscoverWithKeyword(TOKUSATSU_KEYWORD_ID, page);
-          if (!results.length) break;
-          for (const item of results) {
-            if (item.original_language !== 'ja') continue;
-            if (!item.origin_country || !item.origin_country.includes('JP')) continue;
 
-            const mapped = mediaToCard(normalizeTmdbMedia(item, catId));
-            if (mapped) tokusatsuItems.push(mapped);
-          }
-          page++;
+        const searchResults = await fetchTmdb('search/tv', { query: normalizedQuery, page: 1 });
+        for (const item of searchResults) {
+          if (item.original_language !== 'ja') continue;
+          if (!item.origin_country || !item.origin_country.includes('JP')) continue;
+          const haystack = [
+            item.name || '',
+            item.original_name || ''
+          ].join(' ').toLowerCase();
+          const isFranchise = TOKUSATSU_FRANCHISES.some(f => haystack.includes(f));
+          if (!isFranchise) continue;
+          const mapped = mediaToCard(normalizeTmdbMedia(item, catId));
+          if (mapped) tokusatsuItems.push(mapped);
         }
 
         if (tokusatsuItems.length === 0) {
-          const searchResults = await fetchTmdb('search/tv', { query: normalizedQuery, page: 1 });
-          const filtered = searchResults.filter(item =>
-            item.original_language === 'ja' &&
-            item.origin_country?.includes('JP') &&
-            TOKUSATSU_FRANCHISES.some(f =>
-              (item.title || '').toLowerCase().includes(f) ||
-              (item.original_title || '').toLowerCase().includes(f) ||
-              (item.overview || '').toLowerCase().includes(f)
-            )
-          );
-          const mapped = filtered.map(item => mediaToCard(normalizeTmdbMedia(item, catId))).filter(Boolean);
-          tokusatsuItems = mapped;
+          const discoverResults = await fetchTmdbDiscoverWithKeyword(TOKUSATSU_KEYWORD_ID, 1);
+          for (const item of discoverResults) {
+            if (item.original_language !== 'ja') continue;
+            if (!item.origin_country || !item.origin_country.includes('JP')) continue;
+            const mapped = mediaToCard(normalizeTmdbMedia(item, catId));
+            if (mapped) tokusatsuItems.push(mapped);
+          }
         }
 
         if (tokusatsuItems.length > 0) {
@@ -444,13 +424,13 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
         }
         allResults.push(...tokusatsuItems);
       } catch (err) {
+        anyProviderFailed = true;
         logger.warn({ err, category: catId }, 'Tokusatsu TMDB error');
       }
     }
   }
 
   allResults = allResults.filter(item => item && item.status !== 'NOT_YET_RELEASED');
-  allResults = allResults.filter(item => item && !item.isAdult);
 
   allResults = allResults.filter(item => {
     if (item.category === 'anime') {
@@ -461,7 +441,8 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
     return true;
   });
 
-  const rankedResults = rankSearchResults(intent, allResults);
+  const dedupedResults = deduplicateSearchResults(allResults);
+  const rankedResults = rankSearchResults(intent, dedupedResults);
 
   let unique = rankedResults;
 
@@ -531,11 +512,11 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   if (!force) {
     let ttlSeconds;
     if (unique.length === 0) {
-      ttlSeconds = 300;
+      ttlSeconds = anyProviderFailed ? 30 : 300;
     } else if (unique.length < 3) {
-      ttlSeconds = 7200;
+      ttlSeconds = 43200;
     } else {
-      ttlSeconds = 21600;
+      ttlSeconds = 86400;
     }
     await setCache(cacheKey, responseData, ttlSeconds);
   }
