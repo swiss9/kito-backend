@@ -6,7 +6,7 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
 const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, MediaType, QUERY_CORRECTIONS, TOKUSATSU_FRANCHISES } = require('../config');
-const { fetchAniList, fetchTmdb, searchKitsu, searchJikan, searchShikimori, normalizeAniListMedia, normalizeKitsuMedia, normalizeJikanMedia, normalizeTmdbMedia, normalizeShikimoriMedia, mediaToCard } = require('../services/metadataService');
+const { fetchAniList, fetchTmdb, searchKitsu, searchShikimori, normalizeAniListMedia, normalizeKitsuMedia, normalizeTmdbMedia, normalizeShikimoriMedia, mediaToCard } = require('../services/metadataService');
 const { parseQueryIntent } = require('../services/queryIntentService');
 const { rankSearchResults } = require('../services/searchRankingService');
 const { httpGet } = require('../services/httpClient');
@@ -355,18 +355,6 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
         }
       } catch (err) {
         logger.warn({ err, provider: 'shikimori' }, 'Shikimori search failed');
-      }
-
-      if (items.length === 0) {
-        try {
-          const jikanItems = await searchJikan(normalizedQuery);
-          if (jikanItems.length > 0) {
-            items = jikanItems.map(item => mediaToCard(item)).filter(Boolean);
-            logger.info({ count: items.length, provider: 'jikan' }, 'Jikan fallback results');
-          }
-        } catch (err) {
-          logger.warn({ err, provider: 'jikan' }, 'Jikan search failed');
-        }
       }
 
       if (items.length === 0) {
