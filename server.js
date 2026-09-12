@@ -7,10 +7,10 @@ const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 const { Ratelimit } = require('@upstash/ratelimit');
 const { errorHandler } = require('./middleware/errorHandler');
-const { checkTmdb, checkShikimori, checkJikan, checkKitsu, checkTorrentclaw, checkNyaa, checkKv } = require('./services/healthService');
+const { checkTmdb, checkShikimori, checkKitsu, checkTorrentclaw, checkNyaa, checkKv } = require('./services/healthService');
 const { clearAllCache, deleteCache, getCache, setCache } = require('./services/cacheService');
 const { isValidAdminToken } = require('./utils');
-const { searchShikimori, searchJikan, searchKitsu, normalizeShikimoriMedia, normalizeJikanMedia, normalizeKitsuMedia } = require('./services/metadataService');
+const { searchShikimori, searchKitsu, normalizeShikimoriMedia, normalizeKitsuMedia } = require('./services/metadataService');
 const redisClient = require('./services/redisClient');
 const logger = require('./services/logger');
 
@@ -159,7 +159,6 @@ const DEFAULT_RECOMMENDED = [
 async function resolveRecommendedAnimeEntries(items) {
   const providers = [
     { search: searchShikimori, normalize: normalizeShikimoriMedia, name: 'shikimori' },
-    { search: searchJikan, normalize: normalizeJikanMedia, name: 'jikan' },
     { search: searchKitsu, normalize: normalizeKitsuMedia, name: 'kitsu' }
   ];
 
@@ -269,17 +268,16 @@ function withTimeout(promise, ms, fallback) {
 }
 
 app.get('/api/health', async (req, res) => {
-  const [tmdb, shikimori, jikan, kitsu, torrentclaw, nyaa, kv] = await Promise.all([
+  const [tmdb, shikimori, kitsu, torrentclaw, nyaa, kv] = await Promise.all([
     withTimeout(checkTmdb(), 2500, 'timeout'),
     withTimeout(checkShikimori(), 2500, 'timeout'),
-    withTimeout(checkJikan(), 2500, 'timeout'),
     withTimeout(checkKitsu(), 2500, 'timeout'),
     withTimeout(checkTorrentclaw(), 2500, 'timeout'),
     withTimeout(checkNyaa(), 2500, 'timeout'),
     withTimeout(checkKv(), 2500, 'timeout')
   ]);
 
-  const checks = { tmdb, shikimori, jikan, kitsu, torrentclaw, nyaa, kv };
+  const checks = { tmdb, shikimori, kitsu, torrentclaw, nyaa, kv };
   const healthy = Object.values(checks).every(c => c === 'ok');
   res.status(200).json({ status: healthy ? 'ok' : 'degraded', checks });
 });
