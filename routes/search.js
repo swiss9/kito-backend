@@ -143,7 +143,7 @@ function groupByFranchise(items) {
       id: `franchise:${base}`,
       title: cleanTitle,
       aliases,
-      subtitle: `${seasons.length} seasons${minYear ? ` Â· ${minYear}${maxYear && maxYear !== minYear ? 'â€“' + maxYear : ''}` : ''}`,
+      subtitle: `${seasons.length} seasons${minYear ? ` · ${minYear}${maxYear && maxYear !== minYear ? '–' + maxYear : ''}` : ''}`,
       category: first.category,
       mediaType: 'collection',
       year: minYear,
@@ -350,7 +350,11 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
       try {
         const shikimoriResults = await searchShikimori(normalizedQuery);
         if (shikimoriResults.length > 0) {
-          items = shikimoriResults.map(item => mediaToCard(item)).filter(Boolean);
+          items = shikimoriResults
+            .map(item => normalizeShikimoriMedia(item, 'anime'))
+            .filter(Boolean)
+            .map(media => mediaToCard(media))
+            .filter(Boolean);
           logger.info({ count: items.length, provider: 'shikimori' }, 'Shikimori results');
         }
       } catch (err) {
@@ -397,7 +401,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
 
     if (catId === 'tokusatsu') {
       if (category === 'any' && !TOKUSATSU_FRANCHISES.some(f => normalizedQ.includes(f))) {
-        logger.info({ query: normalizedQuery }, 'Skipping tokusatsu search â€“ query does not match any tokusatsu franchise');
+        logger.info({ query: normalizedQuery }, 'Skipping tokusatsu search – query does not match any tokusatsu franchise');
         continue;
       }
 
