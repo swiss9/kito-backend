@@ -249,40 +249,6 @@ async function searchNyaaRSS(title, category = 'anime', force = false) {
   return results;
 }
 
-async function searchAnimeGarden(title) {
-  const url = `https://api.animes.garden/resources?search=${encodeURIComponent(title)}`;
-  const cacheKey = `animegarden:${url}`;
-  const cached = await getCache(cacheKey);
-  if (cached) {
-    rootLogger.debug(`[animegarden] cache HIT for "${title}" -> ${cached.length} results`);
-    return cached;
-  }
-
-  try {
-    const res = await httpGet(url, { timeoutMs: 5000, maxRetries: 1 });
-    const data = await res.json();
-    let rawResults = [];
-    if (data && typeof data === 'object') {
-      if (Array.isArray(data.results)) rawResults = data.results;
-      else if (Array.isArray(data)) rawResults = data;
-    }
-    const mapped = rawResults.map(r => ({
-      name: r.title || r.name || 'Unknown',
-      magnet: r.magnet || '',
-      size: r.size || '',
-      seeders: r.seeders || 0,
-      leechers: r.leechers || 0,
-      uploader: r.publisher || r.uploader || ''
-    }));
-    rootLogger.debug(`[animegarden] query "${title}" -> ${mapped.length} results`);
-    await setCache(cacheKey, mapped, 1800);
-    return mapped;
-  } catch (err) {
-    rootLogger.warn({ err, title }, 'AnimeGarden search failed');
-    return [];
-  }
-}
-
 function deduplicateRawReleases(releases) {
   const map = new Map();
   for (const r of releases) {
@@ -432,17 +398,13 @@ async function searchReleasesWithFallback(media, force = false, logger = null) {
   if (shouldFallback) {
     log.info('Nyaa returned no complete release, trying fallback sources');
     try {
-      let gardenRaw = [];
       let clawRaw = [];
       if (categoryId === 'anime' || categoryId === 'tokusatsu') {
-        gardenRaw = await searchAnimeGarden(media.title);
         clawRaw = await searchTorrentClaw(media.title);
       }
-      const gardenValid = gardenRaw.filter(r => isReleaseValid(r, media));
       const clawValid = clawRaw.filter(r => isReleaseValid(r, media));
-      log.info({ source: 'animegarden', count: gardenValid.length }, 'AnimeGarden fallback completed');
       log.info({ source: 'torrentclaw', count: clawValid.length }, 'TorrentClaw fallback completed');
-      allRawResults = allRawResults.concat(gardenValid, clawValid);
+      allRawResults = allRawResults.concat(clawValid);
     } catch (err) {
       log.warn({ err }, 'Fallback sources failed');
       warnings.push('Fallback sources failed.');
@@ -460,7 +422,6 @@ module.exports = {
   searchTorrentClaw,
   searchNyaaRSS,
   searchNyaaRSSWithRetry,
-  searchAnimeGarden,
   searchWithAggregation,
   searchAnimeReleases,
   searchReleases,
