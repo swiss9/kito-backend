@@ -9,7 +9,7 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
 const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, CoverageType, TRUSTED_GROUPS, MediaType, TOKUSATSU_FRANCHISES } = require('../config');
-const { fetchAniList, searchAnilistByTitle, fetchTmdb, searchJikan, searchKitsu, searchShikimori, fetchShikimori, normalizeAniListMedia, normalizeJikanMedia, normalizeKitsuMedia, normalizeTmdbMedia, normalizeShikimoriMedia, mediaToCard } = require('../services/metadataService');
+const { fetchAniList, searchAnilistByTitle, fetchTmdb, searchKitsu, searchShikimori, fetchShikimori, normalizeAniListMedia, normalizeKitsuMedia, normalizeTmdbMedia, normalizeShikimoriMedia, mediaToCard } = require('../services/metadataService');
 const { searchReleasesWithFallback } = require('../services/torrentService');
 const { rankReleases, selectBestCandidates } = require('../services/releaseRankingService');
 const { isValidAdminToken } = require('../utils');
@@ -205,15 +205,6 @@ async function fallbackFetchAnimeByTitle(title, categoryId, logger) {
   }
 
   try {
-    const jikanResults = await searchJikan(title);
-    if (jikanResults.length > 0) {
-      return normalizeJikanMedia(jikanResults[0], categoryId);
-    }
-  } catch (err) {
-    logger.warn({ err, title }, 'Jikan fallback failed');
-  }
-
-  try {
     const kitsuResults = await searchKitsu(title);
     if (kitsuResults.length > 0) {
       return normalizeKitsuMedia(kitsuResults[0]);
@@ -239,7 +230,6 @@ async function fallbackFetchAnimeByTitle(title, categoryId, logger) {
 
 async function getMediaObject(mediaId, categoryId, title, logger) {
   const detectedProvider = mediaId.startsWith('anilist') ? 'anilist' :
-                           mediaId.startsWith('jikan') ? 'jikan' :
                            mediaId.startsWith('shikimori') ? 'shikimori' : 'tmdb';
   const providerId = mediaId.split(':')[1];
 
@@ -282,21 +272,6 @@ async function getMediaObject(mediaId, categoryId, title, logger) {
       }
     } catch (err) {
       logger.warn({ err, provider: 'anilist', id: providerId }, 'AniList detail failed');
-      if (title) return await fallbackFetchAnimeByTitle(title, categoryId, logger);
-    }
-  } else if (provider === 'jikan') {
-    try {
-      const url = `https://api.jikan.moe/v4/anime/${providerId}`;
-      const res = await fetch(url, {
-        headers: { 'User-Agent': 'KITO/1.0' },
-        signal: AbortSignal.timeout(8000)
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return normalizeJikanMedia(data.data, categoryId);
-      }
-    } catch (err) {
-      logger.warn({ err, provider: 'jikan', id: providerId }, 'Jikan detail failed');
       if (title) return await fallbackFetchAnimeByTitle(title, categoryId, logger);
     }
   } else if (provider === 'shikimori') {
