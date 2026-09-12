@@ -4,84 +4,6 @@ const { getCache, setCache } = require('./cacheService');
 const { searchShikimori, normalizeShikimoriMedia, fetchShikimori } = require('./shikimoriService');
 
 const KITSU_API = 'https://kitsu.io/api/edge';
-const JIKAN_API = 'https://api.jikan.moe/v4';
-
-const jikanQueue = [];
-let jikanProcessing = false;
-let jikanLastRequest = 0;
-const JIKAN_MIN_INTERVAL = 350;
-
-async function processJikanQueue() {
-  if (jikanProcessing || jikanQueue.length === 0) return;
-  jikanProcessing = true;
-
-  while (jikanQueue.length > 0) {
-    const now = Date.now();
-    const elapsed = now - jikanLastRequest;
-    if (elapsed < JIKAN_MIN_INTERVAL) {
-      await new Promise(r => setTimeout(r, JIKAN_MIN_INTERVAL - elapsed));
-    }
-    const { url, resolve, reject } = jikanQueue.shift();
-    jikanLastRequest = Date.now();
-    try {
-      const res = await fetch(url, {
-        headers: { 'User-Agent': 'KITO/1.0' },
-        signal: AbortSignal.timeout(8000)
-      });
-      if (!res.ok) {
-        reject(new Error(`Jikan HTTP ${res.status}`));
-      } else {
-        resolve(await res.json());
-      }
-    } catch (err) {
-      reject(err);
-    }
-  }
-
-  jikanProcessing = false;
-  if (jikanQueue.length > 0) processJikanQueue();
-}
-
-function fetchJikanQueued(url) {
-  return new Promise((resolve, reject) => {
-    jikanQueue.push({ url, resolve, reject });
-    processJikanQueue();
-  });
-}
-
-async function searchJikan(title) {
-  const cacheKey = `jikan_search:${title.toLowerCase().trim()}`;
-  const cached = await getCache(cacheKey);
-  if (cached) return cached;
-
-  try {
-    const searchUrl = `${JIKAN_API}/anime?q=${encodeURIComponent(title)}&limit=10`;
-    const res = await fetchJikanQueued(searchUrl);
-    if (!res.data || res.data.length === 0) return [];
-
-    const candidates = res.data.filter(item =>
-      ['TV', 'Movie', 'OVA', 'ONA', 'Special'].includes(item.type)
-    );
-    if (candidates.length === 0) return [];
-
-    const sorted = candidates.sort((a, b) => {
-      const aScore = (a.episodes || 0) * 10 + (a.score || 0);
-      const bScore = (b.episodes || 0) * 10 + (b.score || 0);
-      return bScore - aScore;
-    });
-
-    const best = sorted[0];
-    const detailUrl = `${JIKAN_API}/anime/${best.mal_id}`;
-    const detailRes = await fetchJikanQueued(detailUrl);
-    const normalized = normalizeJikanMedia(detailRes.data, 'anime');
-
-    await setCache(cacheKey, normalized ? [normalized] : [], 43200);
-    return normalized ? [normalized] : [];
-  } catch (err) {
-    logger.warn({ err, title }, 'Jikan search failed');
-    return [];
-  }
-}
 
 async function searchKitsu(query) {
   const cacheKey = `kitsu_search:${query.toLowerCase().trim()}`;
@@ -159,28 +81,6 @@ function normalizeKitsuMedia(item) {
     seasonNumber: null,
     seasonEpisodeCount: episodeCount,
     totalEpisodeCount: episodeCount
-  };
-}
-
-function normalizeJikanMedia(item, category) {
-  if (!item) return null;
-  return {
-    id: `jikan:${item.mal_id}`,
-    title: item.title || 'Unknown',
-    aliases: [item.title_english, item.title_japanese, ...(item.titles || []).map(t => t.title)].filter(Boolean),
-    year: item.year || (item.aired?.prop?.from?.year) || null,
-    poster: item.images?.jpg?.large_image_url || item.images?.jpg?.image_url || '',
-    mediaType: item.type === 'Movie' ? 'movie' : 'series',
-    episodeCount: item.episodes || null,
-    genres: (item.genres || []).map(g => g.name),
-    status: item.status || 'UNKNOWN',
-    isAdult: item.rating === 'Rx - Hentai' || false,
-    provider: 'jikan',
-    providerId: String(item.mal_id),
-    category,
-    seasonNumber: null,
-    seasonEpisodeCount: item.episodes || null,
-    totalEpisodeCount: item.episodes || null
   };
 }
 
@@ -328,12 +228,10 @@ module.exports = {
   searchAnilistByTitle,
   fetchTmdb,
   searchKitsu,
-  searchJikan,
   searchShikimori,
   fetchShikimori,
   normalizeKitsuMedia,
   normalizeAniListMedia,
-  normalizeJikanMedia,
   normalizeTmdbMedia,
   normalizeShikimoriMedia,
   mediaToCard
