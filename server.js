@@ -143,7 +143,7 @@ app.delete('/api/admin/cache', adminLimiter, async (req, res) => {
   }
 });
 
-const RECOMMENDED_CACHE_VERSION = 2;
+const RECOMMENDED_CACHE_VERSION = 4;
 const RECOMMENDED_TTL_RESOLVED = 31536000;
 const RECOMMENDED_TTL_UNRESOLVED = 3600;
 
@@ -152,34 +152,9 @@ const DEFAULT_RECOMMENDED = [
   { id: 'tmdb:239741', title: 'Kamen Rider Kuuga', subtitle: '2000 Â· 49 eps Â· Action, Adventure, Drama', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/86L7SWkabVrSJAYpYbyryl4q2mU.jpg', provider: 'tmdb', providerId: '239741', hasRelease: true, hasBatch: false, collection: false },
   { id: '', title: 'Fullmetal Alchemist: Brotherhood', subtitle: '2009 Â· 64 eps Â· Action, Adventure, Drama', category: 'anime', poster: '', provider: 'shikimori', providerId: '', hasRelease: true, hasBatch: false, collection: false },
   { id: 'tmdb:139653', title: 'Kamen Rider Build', subtitle: '2017 Â· 49 eps Â· Action, Comedy, Drama', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/t7eAwG1qYxoeNxyUfaM4NqxAkGy.jpg', provider: 'tmdb', providerId: '139653', hasRelease: true, hasBatch: false, collection: false },
-  { id: 'tmdb:2253', title: 'Ultraman Tiga', subtitle: '1996 Â· 52 eps Â· Action, Adventure, Sci-Fi', category: 'tokusatsu', poster: '', provider: 'tmdb', providerId: '2253', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'tmdb:2253', title: 'Ultraman Tiga', subtitle: '1996 Â· 52 eps Â· Action, Adventure, Sci-Fi', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/lYvAiTqXFGuLqos0Wi7899scn6z.jpg', provider: 'tmdb', providerId: '2253', hasRelease: true, hasBatch: false, collection: false },
   { id: '', title: 'Cowboy Bebop', subtitle: '1998 Â· 26 eps Â· Action, Adventure, Drama', category: 'anime', poster: '', provider: 'shikimori', providerId: '', hasRelease: true, hasBatch: false, collection: false }
 ];
-
-async function fetchTmdbPoster(providerId, mediaType) {
-  if (!process.env.TMDB_API_KEY) return null;
-  try {
-    const url = `https://api.themoviedb.org/3/${mediaType}/${providerId}?api_key=${process.env.TMDB_API_KEY}&language=en-US`;
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(5000),
-      headers: { 'User-Agent': 'KITO/1.0' }
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.poster_path ? `https://image.tmdb.org/t/p/w500${data.poster_path}` : null;
-  } catch {
-    return null;
-  }
-}
-
-async function enrichTmdbPosters(items) {
-  return Promise.all(items.map(async (item) => {
-    if (item.provider !== 'tmdb' || item.poster || !item.providerId) return item;
-    const mediaType = item.mediaType === 'movie' ? 'movie' : 'tv';
-    const poster = await fetchTmdbPoster(item.providerId, mediaType);
-    return poster ? { ...item, poster } : item;
-  }));
-}
 
 async function resolveRecommendedAnimeEntries(items) {
   const providers = [
@@ -254,8 +229,7 @@ app.get('/api/recommended', async (req, res) => {
     }
 
     if (!shows) {
-      let enriched = await enrichTmdbPosters(DEFAULT_RECOMMENDED);
-      enriched = await resolveRecommendedAnimeEntries(enriched);
+      let enriched = await resolveRecommendedAnimeEntries(DEFAULT_RECOMMENDED);
       if (enriched && enriched.length > 0) {
         shows = enriched;
         const unresolved = hasUnresolvedAnime(enriched);
