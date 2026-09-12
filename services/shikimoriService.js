@@ -46,6 +46,14 @@ function fetchShikimori(url) {
   });
 }
 
+const KIND_PRIORITY = {
+  tv: 100,
+  ona: 60,
+  ova: 50,
+  special: 40,
+  movie: 30
+};
+
 async function searchShikimori(query) {
   const url = `${SHIKIMORI_API}/animes?search=${encodeURIComponent(query)}&limit=10`;
   try {
@@ -53,10 +61,16 @@ async function searchShikimori(query) {
     if (!Array.isArray(data) || data.length === 0) return [];
 
     const candidates = data.filter(item =>
-      item.kind && ['tv', 'movie', 'ova', 'ona', 'special'].includes(item.kind)
+      item.kind && Object.prototype.hasOwnProperty.call(KIND_PRIORITY, item.kind)
     );
 
-    const sorted = candidates.sort((a, b) => (b.score || 0) - (a.score || 0));
+    const sorted = candidates.sort((a, b) => {
+      const aP = KIND_PRIORITY[a.kind] || 0;
+      const bP = KIND_PRIORITY[b.kind] || 0;
+      if (aP !== bP) return bP - aP;
+      return (b.score || 0) - (a.score || 0);
+    });
+
     const best = sorted[0];
     if (!best) return [];
 
