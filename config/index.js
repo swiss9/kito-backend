@@ -30,7 +30,6 @@ const MediaType = {
 
 const SEQUEL_KEYWORDS = constants.SEQUEL_KEYWORDS;
 const TRUSTED_GROUPS = constants.TRUSTED_GROUPS;
-const OTHER_SERIES = constants.OTHER_SERIES;
 const ALIAS_MAP = constants.ALIAS_MAP || {};
 const QUERY_CORRECTIONS = constants.QUERY_CORRECTIONS || {};
 const TOKUSATSU_FRANCHISES = constants.TOKUSATSU_FRANCHISES || [];
@@ -38,7 +37,7 @@ const TOKUSATSU_FRANCHISES = constants.TOKUSATSU_FRANCHISES || [];
 const categoryConfig = {
   anime: {
     id: 'anime',
-    metadataProvider: 'anilist',
+    metadataProvider: 'jikan',
     mediaType: MediaType.SERIES,
     torrentSources: ['nyaa_rss', 'torrentclaw']
   },
@@ -58,7 +57,6 @@ module.exports = {
   MediaType,
   SEQUEL_KEYWORDS,
   TRUSTED_GROUPS,
-  OTHER_SERIES,
   ALIAS_MAP,
   QUERY_CORRECTIONS,
   TOKUSATSU_FRANCHISES,
