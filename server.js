@@ -7,10 +7,10 @@ const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 const { Ratelimit } = require('@upstash/ratelimit');
 const { errorHandler } = require('./middleware/errorHandler');
-const { checkTmdb, checkJikan, checkKitsu, checkTorrentclaw, checkNyaa, checkKv } = require('./services/healthService');
+const { checkTmdb, checkMal, checkKitsu, checkTorrentclaw, checkNyaa, checkKv } = require('./services/healthService');
 const { clearAllCache, deleteCache, getCache, setCache } = require('./services/cacheService');
 const { isValidAdminToken } = require('./utils');
-const { searchJikan, searchKitsu, normalizeJikanMedia, normalizeKitsuMedia } = require('./services/metadataService');
+const { searchMal, searchKitsu, normalizeMalMedia, normalizeKitsuMedia } = require('./services/metadataService');
 const redisClient = require('./services/redisClient');
 const logger = require('./services/logger');
 
@@ -143,22 +143,22 @@ app.delete('/api/admin/cache', adminLimiter, async (req, res) => {
   }
 });
 
-const RECOMMENDED_CACHE_VERSION = 4;
+const RECOMMENDED_CACHE_VERSION = 5;
 const RECOMMENDED_TTL_RESOLVED = 31536000;
 const RECOMMENDED_TTL_UNRESOLVED = 3600;
 
 const DEFAULT_RECOMMENDED = [
-  { id: '', title: 'Neon Genesis Evangelion', subtitle: '1995 Â· 26 eps Â· Action, Drama, Sci-Fi', category: 'anime', poster: '', provider: 'jikan', providerId: '', hasRelease: true, hasBatch: false, collection: false },
+  { id: '', title: 'Neon Genesis Evangelion', subtitle: '1995 Â· 26 eps Â· Action, Drama, Sci-Fi', category: 'anime', poster: '', provider: 'mal', providerId: '', hasRelease: true, hasBatch: false, collection: false },
   { id: 'tmdb:239741', title: 'Kamen Rider Kuuga', subtitle: '2000 Â· 49 eps Â· Action, Adventure, Drama', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/86L7SWkabVrSJAYpYbyryl4q2mU.jpg', provider: 'tmdb', providerId: '239741', hasRelease: true, hasBatch: false, collection: false },
-  { id: '', title: 'Fullmetal Alchemist: Brotherhood', subtitle: '2009 Â· 64 eps Â· Action, Adventure, Drama', category: 'anime', poster: '', provider: 'jikan', providerId: '', hasRelease: true, hasBatch: false, collection: false },
+  { id: '', title: 'Fullmetal Alchemist: Brotherhood', subtitle: '2009 Â· 64 eps Â· Action, Adventure, Drama', category: 'anime', poster: '', provider: 'mal', providerId: '', hasRelease: true, hasBatch: false, collection: false },
   { id: 'tmdb:139653', title: 'Kamen Rider Build', subtitle: '2017 Â· 49 eps Â· Action, Comedy, Drama', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/t7eAwG1qYxoeNxyUfaM4NqxAkGy.jpg', provider: 'tmdb', providerId: '139653', hasRelease: true, hasBatch: false, collection: false },
   { id: 'tmdb:2253', title: 'Ultraman Tiga', subtitle: '1996 Â· 52 eps Â· Action, Adventure, Sci-Fi', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/lYvAiTqXFGuLqos0Wi7899scn6z.jpg', provider: 'tmdb', providerId: '2253', hasRelease: true, hasBatch: false, collection: false },
-  { id: '', title: 'Cowboy Bebop', subtitle: '1998 Â· 26 eps Â· Action, Adventure, Drama', category: 'anime', poster: '', provider: 'jikan', providerId: '', hasRelease: true, hasBatch: false, collection: false }
+  { id: '', title: 'Cowboy Bebop', subtitle: '1998 Â· 26 eps Â· Action, Adventure, Drama', category: 'anime', poster: '', provider: 'mal', providerId: '', hasRelease: true, hasBatch: false, collection: false }
 ];
 
 async function resolveRecommendedAnimeEntries(items) {
   const providers = [
-    { search: searchJikan, normalize: normalizeJikanMedia, name: 'jikan' },
+    { search: searchMal, normalize: normalizeMalMedia, name: 'mal' },
     { search: searchKitsu, normalize: normalizeKitsuMedia, name: 'kitsu' }
   ];
 
@@ -208,7 +208,7 @@ async function tryResolveWithProvider(items, provider) {
 function isAnimeResolved(entry) {
   if (entry.category !== 'anime') return true;
   if (!entry.providerId) return false;
-  return entry.provider === 'jikan' || entry.provider === 'kitsu';
+  return entry.provider === 'mal' || entry.provider === 'kitsu';
 }
 
 function hasUnresolvedAnime(items) {
@@ -265,21 +265,21 @@ app.use('/api', mediaRoutes);
 function withTimeout(promise, ms, fallback) {
   return Promise.race([
     promise,
-    new Promise(resolve => setTimeout(() => resolve(fallback), ms))
+    new Promise(resolve => setTimeout(resolve, ms)).then(() => fallback)
   ]);
 }
 
 app.get('/api/health', async (req, res) => {
-  const [tmdb, jikan, kitsu, torrentclaw, nyaa, kv] = await Promise.all([
+  const [tmdb, mal, kitsu, torrentclaw, nyaa, kv] = await Promise.all([
     withTimeout(checkTmdb(), 2500, 'timeout'),
-    withTimeout(checkJikan(), 2500, 'timeout'),
+    withTimeout(checkMal(), 2500, 'timeout'),
     withTimeout(checkKitsu(), 2500, 'timeout'),
     withTimeout(checkTorrentclaw(), 2500, 'timeout'),
     withTimeout(checkNyaa(), 2500, 'timeout'),
     withTimeout(checkKv(), 2500, 'timeout')
   ]);
 
-  const checks = { tmdb, jikan, kitsu, torrentclaw, nyaa, kv };
+  const checks = { tmdb, mal, kitsu, torrentclaw, nyaa, kv };
   const healthy = Object.values(checks).every(c => c === 'ok');
   res.status(200).json({ status: healthy ? 'ok' : 'degraded', checks });
 });
