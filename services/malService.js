@@ -136,7 +136,7 @@ async function fetchAndCacheMalSearch(query, cacheKey) {
     const aP = KIND_PRIORITY[a.media_type] || 0;
     const bP = KIND_PRIORITY[b.media_type] || 0;
     if (aP !== bP) return bP - aP;
-    return (b.mean || 0) - (a.mean || 0);
+    return (a.mean || 0) - (b.mean || 0);
   });
 
   const results = sorted.slice(0, CACHE_FETCH_LIMIT);
@@ -146,7 +146,7 @@ async function fetchAndCacheMalSearch(query, cacheKey) {
 
 async function searchMal(query, limit = 5) {
   const normalizedQuery = query.trim().toLowerCase();
-  const cacheKey = `mal_search:v1:${normalizedQuery}`;
+  const cacheKey = `mal_search:v2:${normalizedQuery}`;
 
   const cached = await getCache(cacheKey);
   if (cached) return cached.slice(0, limit);
@@ -227,6 +227,13 @@ function normalizeMalMedia(item, category) {
   const episodeCount = item.num_episodes && item.num_episodes > 0 ? item.num_episodes : null;
   const status = mapStatus(item.status);
   const mediaType = item.media_type;
+
+  if (!poster) {
+    logger.warn(
+      { malId: item.id, title: item.title, hasMainPicture: !!item.main_picture },
+      'MAL result has no poster'
+    );
+  }
 
   return {
     id: `mal:${item.id}`,
