@@ -9,7 +9,7 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
 const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, TRUSTED_GROUPS, MediaType } = require('../config');
-const { fetchTmdb, searchKitsu, searchMal, fetchMal, fetchMalDetail, normalizeKitsuMedia, normalizeTmdbMedia, normalizeMalMedia, mediaToCard } = require('../services/metadataService');
+const { fetchTmdb, searchKitsu, searchMal, fetchMalDetail, normalizeKitsuMedia, normalizeTmdbMedia, normalizeMalMedia, mediaToCard } = require('../services/metadataService');
 const { searchReleasesWithFallback } = require('../services/torrentService');
 const { rankReleases, selectBestCandidates } = require('../services/releaseRankingService');
 const { isValidAdminToken } = require('../utils');
@@ -384,7 +384,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
     if (!mediaObject) throw new ApiError(404, 'Media not found', 'MEDIA_NOT_FOUND');
   }
 
-  const cacheKey = `releases:v3:${categoryId}:${mediaId}`;
+  const cacheKey = `releases:v4:${categoryId}:${mediaId}`;
   if (!force) {
     const cached = await getCache(cacheKey);
     if (cached) {
@@ -408,7 +408,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
         total: cached.releases.length,
         page,
         limit,
-        best: bestRelease ? serializeRelease(bestRelease) : null,
+        best: bestRelease && bestRelease.confidence !== 'low' ? serializeRelease(bestRelease) : null,
         torrents: paginatedReleases.map(serializeRelease),
         hasMore: end < cached.releases.length,
         lowConfidenceCount: cached.releases.filter(r => r.confidence === 'low').length,
@@ -449,7 +449,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
     total: selected.length,
     page,
     limit,
-    best: selected.length ? serializeRelease(selected[0]) : null,
+    best: selected.length && selected[0].confidence !== 'low' ? serializeRelease(selected[0]) : null,
     torrents: paginated.map(serializeRelease),
     hasMore: end < selected.length,
     lowConfidenceCount: selected.filter(r => r.confidence === 'low').length,
