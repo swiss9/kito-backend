@@ -1,7 +1,7 @@
 const { httpGet } = require('./httpClient');
 const logger = require('./logger');
 const { getCache, setCache } = require('./cacheService');
-const { searchShikimori, normalizeShikimoriMedia, fetchShikimori } = require('./shikimoriService');
+const { searchJikan, normalizeJikanMedia, fetchJikan } = require('./jikanService');
 
 const KITSU_API = 'https://kitsu.io/api/edge';
 const KITSU_TTL_SECONDS = 21600;
@@ -185,10 +185,10 @@ async function fetchTmdb(endpoint, params = {}) {
 module.exports = {
   fetchTmdb,
   searchKitsu,
-  searchShikimori,
-  fetchShikimori,
+  searchJikan,
+  fetchJikan,
   normalizeKitsuMedia,
   normalizeTmdbMedia,
-  normalizeShikimoriMedia,
+  normalizeJikanMedia,
   mediaToCard
 };
