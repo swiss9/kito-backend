@@ -9,7 +9,7 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
 const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, TRUSTED_GROUPS, MediaType } = require('../config');
-const { fetchTmdb, searchKitsu, searchJikan, fetchJikan, normalizeKitsuMedia, normalizeTmdbMedia, normalizeJikanMedia, mediaToCard } = require('../services/metadataService');
+const { fetchTmdb, searchKitsu, searchMal, fetchMal, fetchMalDetail, normalizeKitsuMedia, normalizeTmdbMedia, normalizeMalMedia, mediaToCard } = require('../services/metadataService');
 const { searchReleasesWithFallback } = require('../services/torrentService');
 const { rankReleases, selectBestCandidates } = require('../services/releaseRankingService');
 const { isValidAdminToken } = require('../utils');
@@ -244,12 +244,12 @@ async function fallbackFetchAnimeByTitle(title, categoryId, logger) {
   }
 
   try {
-    const jikanResults = await searchJikan(title, 1);
-    if (jikanResults && jikanResults.length > 0) {
-      return normalizeJikanMedia(jikanResults[0], categoryId);
+    const malResults = await searchMal(title, 1);
+    if (malResults && malResults.length > 0) {
+      return normalizeMalMedia(malResults[0], categoryId);
     }
   } catch (err) {
-    logger.warn({ err, title }, 'Jikan fallback failed');
+    logger.warn({ err, title }, 'MAL fallback failed');
   }
 
   try {
@@ -277,7 +277,7 @@ async function fallbackFetchAnimeByTitle(title, categoryId, logger) {
 }
 
 async function getMediaObject(mediaId, categoryId, title, logger) {
-  const detectedProvider = mediaId.startsWith('jikan') ? 'jikan' : 'tmdb';
+  const detectedProvider = mediaId.startsWith('mal') ? 'mal' : 'tmdb';
   const providerId = mediaId.split(':')[1];
 
   if (categoryId === 'tokusatsu' && detectedProvider !== 'tmdb') {
@@ -293,12 +293,12 @@ async function getMediaObject(mediaId, categoryId, title, logger) {
 
   const provider = detectedProvider;
 
-  if (provider === 'jikan') {
+  if (provider === 'mal') {
     try {
-      const response = await fetchJikan(`https://api.jikan.moe/v4/anime/${providerId}/full`);
-      return normalizeJikanMedia(response?.data, categoryId);
+      const data = await fetchMalDetail(providerId);
+      return normalizeMalMedia(data, categoryId);
     } catch (err) {
-      logger.warn({ err, provider: 'jikan', id: providerId }, 'Jikan detail failed');
+      logger.warn({ err, provider: 'mal', id: providerId }, 'MAL detail failed');
       if (title) return await fallbackFetchAnimeByTitle(title, categoryId, logger);
       return null;
     }
@@ -358,9 +358,9 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
       mediaId = media.id;
       title = media.title;
     } else {
-      const media = await searchJikan(title, 1);
+      const media = await searchMal(title, 1);
       if (media && media.length > 0) {
-        const normalized = normalizeJikanMedia(media[0], categoryId);
+        const normalized = normalizeMalMedia(media[0], categoryId);
         mediaId = normalized.id;
         title = normalized.title;
       } else {
@@ -384,7 +384,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
     if (!mediaObject) throw new ApiError(404, 'Media not found', 'MEDIA_NOT_FOUND');
   }
 
-  const cacheKey = `releases:v2:${categoryId}:${mediaId}`;
+  const cacheKey = `releases:v3:${categoryId}:${mediaId}`;
   if (!force) {
     const cached = await getCache(cacheKey);
     if (cached) {
@@ -478,9 +478,9 @@ router.post('/releases/batch', batchRateLimiterMiddleware, validate(batchRelease
           mediaId = media.id;
           title = media.title;
         } else {
-          const media = await searchJikan(title, 1);
+          const media = await searchMal(title, 1);
           if (!media || media.length === 0) return { id: item.id, error: 'Media not found' };
-          const normalized = normalizeJikanMedia(media[0], item.category);
+          const normalized = normalizeMalMedia(media[0], item.category);
           mediaId = normalized.id;
           title = normalized.title;
         }
@@ -642,13 +642,13 @@ Return ONLY JSON in this shape:
 
   const resolved = await Promise.all(titles.map(async (t) => {
     try {
-      const jikanResults = await searchJikan(t, 1);
-      if (jikanResults && jikanResults.length > 0) {
-        const normalized = normalizeJikanMedia(jikanResults[0], 'anime');
+      const malResults = await searchMal(t, 1);
+      if (malResults && malResults.length > 0) {
+        const normalized = normalizeMalMedia(malResults[0], 'anime');
         return mediaToCard(normalized);
       }
     } catch (err) {
-      logger.warn({ err, title: t }, 'Jikan resolution failed for recommendation');
+      logger.warn({ err, title: t }, 'MAL resolution failed for recommendation');
     }
     return null;
   }));
