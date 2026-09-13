@@ -43,7 +43,7 @@ const configuredOrigins = (process.env.FRONTEND_ORIGIN || 'http://localhost:3000
   .filter(Boolean);
 
 function corsOriginResolver(origin, callback) {
-  if (!origin) return callback(null, true);
+  if (!origin || origin === 'null') return callback(null, true);
   if (configuredOrigins.includes('*')) return callback(null, true);
   if (configuredOrigins.includes(origin)) return callback(null, true);
   logger.warn({ origin, allowed: configuredOrigins }, 'CORS origin rejected');
@@ -60,6 +60,14 @@ app.use(cors({
 
 app.use(compression());
 app.use(express.json());
+
+app.use((req, res, next) => {
+  const ct = res.getHeader('Content-Type');
+  if (!ct || (typeof ct === 'string' && !ct.includes('charset'))) {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  }
+  next();
+});
 
 let generalRatelimit = null;
 if (redisClient) {
@@ -143,17 +151,17 @@ app.delete('/api/admin/cache', adminLimiter, async (req, res) => {
   }
 });
 
-const RECOMMENDED_CACHE_VERSION = 5;
+const RECOMMENDED_CACHE_VERSION = 6;
 const RECOMMENDED_TTL_RESOLVED = 31536000;
 const RECOMMENDED_TTL_UNRESOLVED = 3600;
 
 const DEFAULT_RECOMMENDED = [
-  { id: '', title: 'Neon Genesis Evangelion', subtitle: '1995 Ã‚Â· 26 eps Ã‚Â· Action, Drama, Sci-Fi', category: 'anime', poster: '', provider: 'mal', providerId: '', hasRelease: true, hasBatch: false, collection: false },
-  { id: 'tmdb:239741', title: 'Kamen Rider Kuuga', subtitle: '2000 Ã‚Â· 49 eps Ã‚Â· Action, Adventure, Drama', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/86L7SWkabVrSJAYpYbyryl4q2mU.jpg', provider: 'tmdb', providerId: '239741', hasRelease: true, hasBatch: false, collection: false },
-  { id: '', title: 'Fullmetal Alchemist: Brotherhood', subtitle: '2009 Ã‚Â· 64 eps Ã‚Â· Action, Adventure, Drama', category: 'anime', poster: '', provider: 'mal', providerId: '', hasRelease: true, hasBatch: false, collection: false },
-  { id: 'tmdb:139653', title: 'Kamen Rider Build', subtitle: '2017 Ã‚Â· 49 eps Ã‚Â· Action, Comedy, Drama', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/t7eAwG1qYxoeNxyUfaM4NqxAkGy.jpg', provider: 'tmdb', providerId: '139653', hasRelease: true, hasBatch: false, collection: false },
-  { id: 'tmdb:2253', title: 'Ultraman Tiga', subtitle: '1996 Ã‚Â· 52 eps Ã‚Â· Action, Adventure, Sci-Fi', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/lYvAiTqXFGuLqos0Wi7899scn6z.jpg', provider: 'tmdb', providerId: '2253', hasRelease: true, hasBatch: false, collection: false },
-  { id: '', title: 'Cowboy Bebop', subtitle: '1998 Ã‚Â· 26 eps Ã‚Â· Action, Adventure, Drama', category: 'anime', poster: '', provider: 'mal', providerId: '', hasRelease: true, hasBatch: false, collection: false }
+  { id: '', title: 'Neon Genesis Evangelion', subtitle: '1995 | 26 eps | Action, Drama, Sci-Fi', category: 'anime', poster: '', provider: 'mal', providerId: '', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'tmdb:239741', title: 'Kamen Rider Kuuga', subtitle: '2000 | 49 eps | Action, Adventure, Drama', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/86L7SWkabVrSJAYpYbyryl4q2mU.jpg', provider: 'tmdb', providerId: '239741', hasRelease: true, hasBatch: false, collection: false },
+  { id: '', title: 'Fullmetal Alchemist: Brotherhood', subtitle: '2009 | 64 eps | Action, Adventure, Drama', category: 'anime', poster: '', provider: 'mal', providerId: '', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'tmdb:139653', title: 'Kamen Rider Build', subtitle: '2017 | 49 eps | Action, Comedy, Drama', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/t7eAwG1qYxoeNxyUfaM4NqxAkGy.jpg', provider: 'tmdb', providerId: '139653', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'tmdb:2253', title: 'Ultraman Tiga', subtitle: '1996 | 52 eps | Action, Adventure, Sci-Fi', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/lYvAiTqXFGuLqos0Wi7899scn6z.jpg', provider: 'tmdb', providerId: '2253', hasRelease: true, hasBatch: false, collection: false },
+  { id: '', title: 'Cowboy Bebop', subtitle: '1998 | 26 eps | Action, Adventure, Drama', category: 'anime', poster: '', provider: 'mal', providerId: '', hasRelease: true, hasBatch: false, collection: false }
 ];
 
 async function resolveRecommendedAnimeEntries(items) {
@@ -184,6 +192,7 @@ async function tryResolveWithProvider(items, provider) {
       if (!raw || raw.length === 0) return null;
       const normalized = provider.normalize(raw[0], 'anime');
       if (!normalized) return null;
+      if (!normalized.poster) return null;
       return {
         ...item,
         id: normalized.id,
