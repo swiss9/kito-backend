@@ -1,5 +1,4 @@
 const { httpGet } = require('./httpClient');
-const logger = require('./logger');
 const { getCache, setCache } = require('./cacheService');
 const { searchMal, normalizeMalMedia, fetchMalDetail } = require('./malService');
 
@@ -138,7 +137,7 @@ function mediaToCard(media) {
   return {
     id: media.id,
     title: media.title,
-    subtitle: `${media.year || 'N/A'} Â· ${episodes}`,
+    subtitle: `${media.year || 'N/A'} | ${episodes}`,
     category: media.category,
     poster: media.poster,
     provider: media.provider,
