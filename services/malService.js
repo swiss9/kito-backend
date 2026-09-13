@@ -11,7 +11,14 @@ const MINUTE_WINDOW_MS = 60000;
 const MINUTE_MAX = 50;
 
 const SEARCH_FIELDS = 'id,title,main_picture,alternative_titles,start_date,end_date,mean,media_type,status,num_episodes,popularity';
-const DETAIL_FIELDS = 'id,title,main_picture,alternative_titles,start_date,end_date,synopsis,mean,media_type,status,num_episodes,popularity,genres,studios';
+const DETAIL_FIELDS = 'id,title,main_picture,alternative_titles,start_date,end_date,synopsis,mean,media_type,status,num_episodes,popularity,genres,studios,relations';
+
+const FORBIDDEN_RELATION_TYPES = new Set([
+  'sequel',
+  'side_story',
+  'spin_off',
+  'summary'
+]);
 
 const requestQueue = [];
 let isProcessing = false;
@@ -197,6 +204,19 @@ function pickTitle(item) {
   return 'Unknown';
 }
 
+function extractForbiddenTitles(item) {
+  if (!item || !Array.isArray(item.relations)) return [];
+  const titles = [];
+  for (const rel of item.relations) {
+    if (!rel || !FORBIDDEN_RELATION_TYPES.has(rel.relation_type)) continue;
+    const node = rel.node;
+    if (!node || typeof node.title !== 'string') continue;
+    const trimmed = node.title.trim();
+    if (trimmed.length > 0) titles.push(trimmed);
+  }
+  return [...new Set(titles)];
+}
+
 function normalizeMalMedia(item, category) {
   if (!item || !item.id) return null;
 
@@ -225,7 +245,8 @@ function normalizeMalMedia(item, category) {
     popularity: item.mean || 0,
     seasonNumber: null,
     seasonEpisodeCount: episodeCount,
-    totalEpisodeCount: episodeCount
+    totalEpisodeCount: episodeCount,
+    forbiddenTitles: extractForbiddenTitles(item)
   };
 }
 
