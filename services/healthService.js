@@ -17,12 +17,13 @@ async function checkTmdb() {
   }
 }
 
-async function checkShikimori() {
+async function checkJikan() {
   try {
-    const res = await fetch('https://shikimori.one/api/animes?limit=1', {
+    const res = await fetch('https://api.jikan.moe/v4/anime?q=test&limit=1', {
       signal: AbortSignal.timeout(5000),
       headers: { 'User-Agent': USER_AGENT }
     });
+    if (res.status === 429) return 'rate_limited';
     return res.ok ? 'ok' : 'error';
   } catch {
     return 'timeout';
@@ -80,4 +81,4 @@ async function checkKv() {
   }
 }
 
-module.exports = { checkTmdb, checkShikimori, checkKitsu, checkTorrentclaw, checkNyaa, checkKv };
+module.exports = { checkTmdb, checkJikan, checkKitsu, checkTorrentclaw, checkNyaa, checkKv };
