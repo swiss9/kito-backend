@@ -16,17 +16,39 @@ const logger = require('../services/logger');
 
 const TOKUSATSU_KEYWORD_ID = '317204';
 
+const QUERY_STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'with', 'no', 'na'
+]);
+
 function normalizeSearchQuery(raw) {
   const trimmed = raw.trim();
   const lower = trimmed.toLowerCase();
   if (QUERY_CORRECTIONS[lower]) {
     return QUERY_CORRECTIONS[lower];
   }
-  return trimmed;
+  const words = trimmed.split(/\s+/);
+  const corrected = words.map(w => QUERY_CORRECTIONS[w.toLowerCase()] || w);
+  return corrected.join(' ');
 }
 
 function getCategories() { return Object.keys(categoryConfig); }
 function getCategory(id) { return categoryConfig[id] || null; }
+
+function isTokusatsuFocusedQuery(normalizedQ) {
+  return TOKUSATSU_FRANCHISES.some(f => normalizedQ.includes(f));
+}
+
+function getDistinctiveQueryTokens(query) {
+  if (!query) return [];
+  const lower = query.toLowerCase();
+  const tokens = lower.split(/\s+/).filter(t => t.length > 1 && !QUERY_STOPWORDS.has(t));
+  return tokens.filter(t => {
+    for (const franchise of TOKUSATSU_FRANCHISES) {
+      if (franchise.includes(t) || t.includes(franchise)) return false;
+    }
+    return true;
+  });
+}
 
 function extractSeasonFromTitle(title) {
   if (!title) return null;
@@ -309,7 +331,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   const intent = parseQueryIntent(normalizedQuery);
   const normalizedQ = intent.normalizedTitle || normalizedQuery.trim().toLowerCase();
 
-  let cacheKey = `search:v4:${category}:${normalizedQ}:page:${page}:perPage:${perPage}:group:${group}`;
+  let cacheKey = `search:v6:${category}:${normalizedQ}:page:${page}:perPage:${perPage}:group:${group}`;
   if (force) {
     cacheKey += `:force:${Date.now()}`;
   } else {
@@ -325,6 +347,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   }
 
   const categories = category === 'any' ? getCategories() : [category];
+  const tokusatsuFocused = isTokusatsuFocusedQuery(normalizedQ);
   let allResults = [];
   let anyProviderFailed = false;
 
@@ -333,6 +356,11 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
     if (!config) continue;
 
     if (catId === 'anime') {
+      if (category === 'any' && tokusatsuFocused) {
+        logger.info({ query: normalizedQuery }, 'Skipping anime branch â€“ query is tokusatsu-focused');
+        continue;
+      }
+
       let items = [];
 
       try {
@@ -391,7 +419,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
     }
 
     if (catId === 'tokusatsu') {
-      if (category === 'any' && !TOKUSATSU_FRANCHISES.some(f => normalizedQ.includes(f))) {
+      if (category === 'any' && !tokusatsuFocused) {
         logger.info({ query: normalizedQuery }, 'Skipping tokusatsu search â€“ query does not match any tokusatsu franchise');
         continue;
       }
@@ -400,22 +428,33 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
 
       try {
         let tokusatsuItems = [];
+        const distinctiveTokens = getDistinctiveQueryTokens(normalizedQuery);
 
         const searchResults = await fetchTmdb('search/tv', { query: normalizedQuery, page: 1 });
         for (const item of searchResults) {
           if (item.original_language !== 'ja') continue;
           if (!item.origin_country || !item.origin_country.includes('JP')) continue;
-          const haystack = [
-            item.name || '',
-            item.original_name || ''
-          ].join(' ').toLowerCase();
+
+          const haystack = `${item.name || ''} ${item.original_name || ''}`.toLowerCase();
           const isFranchise = TOKUSATSU_FRANCHISES.some(f => haystack.includes(f));
           if (!isFranchise) continue;
+
+          if (distinctiveTokens.length > 0) {
+            const matchesDistinctive = distinctiveTokens.some(t => haystack.includes(t));
+            if (!matchesDistinctive) continue;
+          }
+
           const mapped = mediaToCard(normalizeTmdbMedia(item, catId));
           if (mapped) tokusatsuItems.push(mapped);
         }
 
         if (tokusatsuItems.length === 0) {
+          if (distinctiveTokens.length > 0) {
+            logger.warn(
+              { query: normalizedQuery, distinctiveTokens },
+              'No tokusatsu matches for distinctive tokens, falling back to discover'
+            );
+          }
           const discoverResults = await fetchTmdbDiscoverWithKeyword(TOKUSATSU_KEYWORD_ID, 1);
           for (const item of discoverResults) {
             if (item.original_language !== 'ja') continue;
