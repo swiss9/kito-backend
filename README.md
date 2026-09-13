@@ -1,6 +1,6 @@
 # KITO Backend
 
-API for kito-search.vercel.app. Anime and tokusatsu search, release ranking, and recommendations.
+API for [kito-search.vercel.app](https://kito-search.vercel.app). Anime and tokusatsu search, release ranking, and recommendations.
 
 **Stack:** Node.js, Express, Vercel. Metadata from MyAnimeList, Kitsu, TMDB. Torrents from Nyaa and TorrentClaw. Recommendations via Groq.
 
