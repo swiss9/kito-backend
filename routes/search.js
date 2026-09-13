@@ -6,7 +6,7 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
 const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, MediaType, QUERY_CORRECTIONS, TOKUSATSU_FRANCHISES } = require('../config');
-const { fetchTmdb, searchKitsu, searchShikimori, normalizeKitsuMedia, normalizeTmdbMedia, normalizeShikimoriMedia, mediaToCard } = require('../services/metadataService');
+const { fetchTmdb, searchKitsu, searchJikan, normalizeKitsuMedia, normalizeTmdbMedia, normalizeJikanMedia, mediaToCard } = require('../services/metadataService');
 const { parseQueryIntent } = require('../services/queryIntentService');
 const { rankSearchResults } = require('../services/searchRankingService');
 const { httpGet } = require('../services/httpClient');
@@ -261,8 +261,14 @@ function deduplicateSearchResults(items) {
 
   for (const item of mergedItems) {
     const franchise = getFranchise({ title: item.title });
-    if (!franchise) continue;
     const year = item.year || '';
+
+    if (!franchise) {
+      const passKey = `pass:${item.id || `${cleanTitleForMatch(item.title)}|${year}`}`;
+      fallbackMap.set(passKey, { ...item });
+      continue;
+    }
+
     const fallbackKey = `${franchise}|${year}`;
     if (fallbackMap.has(fallbackKey)) {
       const existing = fallbackMap.get(fallbackKey);
@@ -303,7 +309,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   const intent = parseQueryIntent(normalizedQuery);
   const normalizedQ = intent.normalizedTitle || normalizedQuery.trim().toLowerCase();
 
-  let cacheKey = `search:${category}:${normalizedQ}:page:${page}:perPage:${perPage}:group:${group}`;
+  let cacheKey = `search:v3:${category}:${normalizedQ}:page:${page}:perPage:${perPage}:group:${group}`;
   if (force) {
     cacheKey += `:force:${Date.now()}`;
   } else {
@@ -330,18 +336,18 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
       let items = [];
 
       try {
-        const shikimoriResults = await searchShikimori(normalizedQuery, 5);
-        if (shikimoriResults.length > 0) {
-          items = shikimoriResults
-            .map(item => normalizeShikimoriMedia(item, 'anime'))
+        const jikanResults = await searchJikan(normalizedQuery, 5);
+        if (jikanResults.length > 0) {
+          items = jikanResults
+            .map(item => normalizeJikanMedia(item, 'anime'))
             .filter(Boolean)
             .map(media => mediaToCard(media))
             .filter(Boolean);
-          logger.info({ count: items.length, provider: 'shikimori' }, 'Shikimori results');
+          logger.info({ count: items.length, provider: 'jikan' }, 'Jikan results');
         }
       } catch (err) {
         anyProviderFailed = true;
-        logger.warn({ err, provider: 'shikimori' }, 'Shikimori search failed');
+        logger.warn({ err, provider: 'jikan' }, 'Jikan search failed');
       }
 
       if (items.length === 0) {
