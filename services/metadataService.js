@@ -1,7 +1,7 @@
 const { httpGet } = require('./httpClient');
 const logger = require('./logger');
 const { getCache, setCache } = require('./cacheService');
-const { searchMal, normalizeMalMedia, fetchMal, fetchMalDetail } = require('./malService');
+const { searchMal, normalizeMalMedia, fetchMalDetail } = require('./malService');
 
 const KITSU_API = 'https://kitsu.io/api/edge';
 const KITSU_TTL_SECONDS = 21600;
@@ -186,7 +186,6 @@ module.exports = {
   fetchTmdb,
   searchKitsu,
   searchMal,
-  fetchMal,
   fetchMalDetail,
   normalizeKitsuMedia,
   normalizeTmdbMedia,
