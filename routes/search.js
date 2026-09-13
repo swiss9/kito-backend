@@ -6,7 +6,7 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
 const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, MediaType, QUERY_CORRECTIONS, TOKUSATSU_FRANCHISES } = require('../config');
-const { fetchTmdb, searchKitsu, searchJikan, normalizeKitsuMedia, normalizeTmdbMedia, normalizeJikanMedia, mediaToCard } = require('../services/metadataService');
+const { fetchTmdb, searchKitsu, searchMal, normalizeKitsuMedia, normalizeTmdbMedia, normalizeMalMedia, mediaToCard } = require('../services/metadataService');
 const { parseQueryIntent } = require('../services/queryIntentService');
 const { rankSearchResults } = require('../services/searchRankingService');
 const { httpGet } = require('../services/httpClient');
@@ -309,7 +309,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   const intent = parseQueryIntent(normalizedQuery);
   const normalizedQ = intent.normalizedTitle || normalizedQuery.trim().toLowerCase();
 
-  let cacheKey = `search:v3:${category}:${normalizedQ}:page:${page}:perPage:${perPage}:group:${group}`;
+  let cacheKey = `search:v4:${category}:${normalizedQ}:page:${page}:perPage:${perPage}:group:${group}`;
   if (force) {
     cacheKey += `:force:${Date.now()}`;
   } else {
@@ -336,18 +336,18 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
       let items = [];
 
       try {
-        const jikanResults = await searchJikan(normalizedQuery, 5);
-        if (jikanResults.length > 0) {
-          items = jikanResults
-            .map(item => normalizeJikanMedia(item, 'anime'))
+        const malResults = await searchMal(normalizedQuery, 5);
+        if (malResults.length > 0) {
+          items = malResults
+            .map(item => normalizeMalMedia(item, 'anime'))
             .filter(Boolean)
             .map(media => mediaToCard(media))
             .filter(Boolean);
-          logger.info({ count: items.length, provider: 'jikan' }, 'Jikan results');
+          logger.info({ count: items.length, provider: 'mal' }, 'MAL results');
         }
       } catch (err) {
         anyProviderFailed = true;
-        logger.warn({ err, provider: 'jikan' }, 'Jikan search failed');
+        logger.warn({ err, provider: 'mal' }, 'MAL search failed');
       }
 
       if (items.length === 0) {
