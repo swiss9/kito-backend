@@ -75,6 +75,18 @@ async function searchKitsu(query, limit = 5) {
   }
 }
 
+async function fetchKitsuDetail(id) {
+  const url = `${KITSU_API}/anime/${id}`;
+  const res = await httpGet(url, {
+    headers: { 'Accept': 'application/vnd.api+json' },
+    timeoutMs: 4000,
+    maxRetries: 0
+  });
+  if (!res.ok) throw new Error(`Kitsu HTTP ${res.status}`);
+  const data = await res.json();
+  return data.data || null;
+}
+
 function normalizeKitsuMedia(item) {
   if (!item || !item.id) return null;
   const attrs = item.attributes || {};
@@ -185,6 +197,7 @@ module.exports = {
   fetchTmdb,
   searchKitsu,
   searchMal,
+  fetchKitsuDetail,
   fetchMalDetail,
   normalizeKitsuMedia,
   normalizeTmdbMedia,
