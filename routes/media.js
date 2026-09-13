@@ -9,7 +9,7 @@ const { asyncHandler } = require('../middleware/asyncHandler');
 const { ApiError } = require('../middleware/errorHandler');
 const { getCache, setCache } = require('../services/cacheService');
 const { categoryConfig, TRUSTED_GROUPS, MediaType } = require('../config');
-const { fetchTmdb, searchKitsu, searchMal, fetchMalDetail, normalizeKitsuMedia, normalizeTmdbMedia, normalizeMalMedia, mediaToCard } = require('../services/metadataService');
+const { fetchTmdb, searchKitsu, searchMal, fetchKitsuDetail, fetchMalDetail, normalizeKitsuMedia, normalizeTmdbMedia, normalizeMalMedia, mediaToCard } = require('../services/metadataService');
 const { searchReleasesWithFallback } = require('../services/torrentService');
 const { rankReleases, selectBestCandidates } = require('../services/releaseRankingService');
 const { isValidAdminToken } = require('../utils');
@@ -31,14 +31,14 @@ let batchRatelimit = null;
 if (redisClient) {
   batchRatelimit = new Ratelimit({
     redis: redisClient,
-    limiter: Ratelimit.slidingWindow(2, '1 m'),
+    limiter: Ratelimit.slidingWindow(10, '1 m'),
     prefix: 'kito_batch_ratelimit',
   });
 }
 
 const batchLimiterMemory = rateLimit({
   windowMs: 60 * 1000,
-  max: 2,
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: { code: 'BATCH_RATE_LIMIT', message: 'Too many batch requests' } }
@@ -277,7 +277,9 @@ async function fallbackFetchAnimeByTitle(title, categoryId, logger) {
 }
 
 async function getMediaObject(mediaId, categoryId, title, logger) {
-  const detectedProvider = mediaId.startsWith('mal') ? 'mal' : 'tmdb';
+  const detectedProvider = mediaId.startsWith('mal') ? 'mal'
+                         : mediaId.startsWith('kitsu') ? 'kitsu'
+                         : 'tmdb';
   const providerId = mediaId.split(':')[1];
 
   if (categoryId === 'tokusatsu' && detectedProvider !== 'tmdb') {
@@ -302,6 +304,17 @@ async function getMediaObject(mediaId, categoryId, title, logger) {
       if (title) return await fallbackFetchAnimeByTitle(title, categoryId, logger);
       return null;
     }
+  }
+
+  if (provider === 'kitsu') {
+    try {
+      const data = await fetchKitsuDetail(providerId);
+      if (data) return normalizeKitsuMedia(data);
+    } catch (err) {
+      logger.warn({ err, provider: 'kitsu', id: providerId }, 'Kitsu detail failed');
+    }
+    if (title) return await fallbackFetchAnimeByTitle(title, categoryId, logger);
+    return null;
   }
 
   if (provider === 'tmdb') {
@@ -384,7 +397,7 @@ router.get('/releases', validate(releasesSchema, 'query'), asyncHandler(async (r
     if (!mediaObject) throw new ApiError(404, 'Media not found', 'MEDIA_NOT_FOUND');
   }
 
-  const cacheKey = `releases:v4:${categoryId}:${mediaId}`;
+  const cacheKey = `releases:v5:${categoryId}:${mediaId}`;
   if (!force) {
     const cached = await getCache(cacheKey);
     if (cached) {
@@ -645,7 +658,9 @@ Return ONLY JSON in this shape:
       const malResults = await searchMal(t, 1);
       if (malResults && malResults.length > 0) {
         const normalized = normalizeMalMedia(malResults[0], 'anime');
-        return mediaToCard(normalized);
+        if (normalized && normalized.poster) {
+          return mediaToCard(normalized);
+        }
       }
     } catch (err) {
       logger.warn({ err, title: t }, 'MAL resolution failed for recommendation');
