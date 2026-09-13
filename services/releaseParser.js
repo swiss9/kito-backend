@@ -1,6 +1,7 @@
 function parseReleaseName(name) {
   const cleaned = name.replace(/\s+/g, ' ').trim();
-  const episodeInfo = extractEpisodeInfo(cleaned);
+  const isMovieRelease = detectMovieRelease(cleaned);
+  const episodeInfo = isMovieRelease ? null : extractEpisodeInfo(cleaned);
   const season = extractSeasonNumber(cleaned);
   const quality = parseQuality(cleaned);
   const source = parseSource(cleaned);
@@ -13,6 +14,7 @@ function parseReleaseName(name) {
     title,
     season,
     episodeInfo,
+    isMovieRelease,
     quality: quality.quality,
     qualityLabel: quality.label,
     source,
@@ -20,6 +22,14 @@ function parseReleaseName(name) {
     resolution,
     group
   };
+}
+
+function detectMovieRelease(name) {
+  if (!name) return false;
+  if (/\b(movies?|films?|filmes?)\s*\d/i.test(name)) return true;
+  if (/\b(movies?|films?)\s*collection\b/i.test(name)) return true;
+  if (/\b\d+\s*(movies?|films?)\b/i.test(name)) return true;
+  return false;
 }
 
 function extractEpisodeInfo(name) {
@@ -50,6 +60,7 @@ function extractReleaseTitle(name) {
 }
 
 function extractEpisodeNumber(name) {
+  const primarySegment = name.split('|')[0].trim();
   const patterns = [
     /\b[Ee]p(?:isode)?\s*(\d+)\b/i,
     /\b[Ee](\d{2,3})(?!\d)\b/i,
@@ -60,7 +71,7 @@ function extractEpisodeNumber(name) {
     /\s-\s(\d{1,3})(?![0-9])/
   ];
   for (const pat of patterns) {
-    const match = name.match(pat);
+    const match = primarySegment.match(pat);
     if (match) {
       const num = parseInt(match[1]);
       if (num > 0 && num < 1000) return num;
@@ -96,13 +107,14 @@ function extractSeasonNumber(name) {
 }
 
 function extractEpisodeRange(name) {
+  const primarySegment = name.split('|')[0].trim();
   const patterns = [
     /(\d+)\s*[-â€“~]\s*(\d+)/,
     /[Ee]p(?:isode)?\s*(\d+)\s*[-â€“~]\s*(\d+)/i,
     /[Ee](\d+)\s*[-â€“~]\s*[Ee]?(\d+)/
   ];
   for (const pat of patterns) {
-    const match = name.match(pat);
+    const match = primarySegment.match(pat);
     if (match) {
       const start = parseInt(match[1]);
       const end = parseInt(match[2]);
@@ -152,6 +164,7 @@ module.exports = {
   extractEpisodeNumber,
   extractSeasonNumber,
   extractEpisodeRange,
+  detectMovieRelease,
   parseQuality,
   parseSource,
   parseCodec,
