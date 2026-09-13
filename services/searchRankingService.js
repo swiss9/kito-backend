@@ -11,6 +11,7 @@ const SEARCH_WEIGHTS = {
 };
 
 const ALIAS_SIMILARITY_THRESHOLD = 0.7;
+const RELEVANCE_THRESHOLD = 0.4;
 
 function scoreCandidate(queryIntent, candidate) {
   let score = 0;
@@ -68,8 +69,15 @@ function rankSearchResults(queryIntent, candidates) {
   const deduped = deduplicateCandidates(candidates);
   const scored = deduped.map(c => ({ ...c, relevanceScore: scoreCandidate(queryIntent, c) }));
   scored.sort((a, b) => b.relevanceScore - a.relevanceScore);
-  const strong = scored.filter(c => c.relevanceScore >= 0.4);
-  return strong;
+  const strong = scored.filter(c => c.relevanceScore >= RELEVANCE_THRESHOLD);
+  return strong.length > 0 ? strong : scored;
 }
 
-module.exports = { rankSearchResults, scoreCandidate, deduplicateCandidates, SEARCH_WEIGHTS, ALIAS_SIMILARITY_THRESHOLD };
+module.exports = {
+  rankSearchResults,
+  scoreCandidate,
+  deduplicateCandidates,
+  SEARCH_WEIGHTS,
+  ALIAS_SIMILARITY_THRESHOLD,
+  RELEVANCE_THRESHOLD
+};
