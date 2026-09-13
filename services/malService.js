@@ -20,6 +20,8 @@ const FORBIDDEN_RELATION_TYPES = new Set([
   'summary'
 ]);
 
+const VALID_MEDIA_TYPES = new Set(['tv', 'ona', 'ova', 'tv_special', 'special', 'movie']);
+
 const requestQueue = [];
 let isProcessing = false;
 
@@ -103,15 +105,6 @@ function fetchMal(url) {
   });
 }
 
-const KIND_PRIORITY = {
-  tv: 100,
-  ona: 60,
-  ova: 50,
-  tv_special: 45,
-  special: 40,
-  movie: 30
-};
-
 async function fetchAndCacheMalSearch(query, cacheKey) {
   const url = `${MAL_API}/anime?q=${encodeURIComponent(query)}&limit=${CACHE_FETCH_LIMIT}&fields=${SEARCH_FIELDS}`;
   const response = await fetchMal(url);
@@ -125,21 +118,14 @@ async function fetchAndCacheMalSearch(query, cacheKey) {
   const items = rows.map(r => r.node).filter(Boolean);
 
   const candidates = items.filter(item =>
-    item.media_type && Object.prototype.hasOwnProperty.call(KIND_PRIORITY, item.media_type)
+    item.media_type && VALID_MEDIA_TYPES.has(item.media_type)
   );
   if (candidates.length === 0) {
     await setCache(cacheKey, [], SEARCH_TTL_SECONDS);
     return [];
   }
 
-  const sorted = candidates.sort((a, b) => {
-    const aP = KIND_PRIORITY[a.media_type] || 0;
-    const bP = KIND_PRIORITY[b.media_type] || 0;
-    if (aP !== bP) return bP - aP;
-    return (a.mean || 0) - (b.mean || 0);
-  });
-
-  const results = sorted.slice(0, CACHE_FETCH_LIMIT);
+  const results = candidates.slice(0, CACHE_FETCH_LIMIT);
   await setCache(cacheKey, results, SEARCH_TTL_SECONDS);
   return results;
 }
