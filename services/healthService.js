@@ -1,4 +1,4 @@
-const { TMDB_API_KEY, TORRENTCLAW_API_KEY } = require('../config');
+const { TMDB_API_KEY, TORRENTCLAW_API_KEY, MAL_CLIENT_ID } = require('../config');
 const { kv } = require('@vercel/kv');
 const logger = require('./logger');
 
@@ -17,15 +17,25 @@ async function checkTmdb() {
   }
 }
 
-async function checkJikan() {
+async function checkMal() {
+  if (!MAL_CLIENT_ID) return 'missing_key';
   try {
-    const res = await fetch('https://api.jikan.moe/v4/anime?q=test&limit=1', {
+    const res = await fetch('https://api.myanimelist.net/v2/anime?q=test&limit=1', {
       signal: AbortSignal.timeout(5000),
-      headers: { 'User-Agent': USER_AGENT }
+      headers: {
+        'User-Agent': USER_AGENT,
+        'X-MAL-CLIENT-ID': MAL_CLIENT_ID
+      }
     });
-    if (res.status === 429) return 'rate_limited';
-    return res.ok ? 'ok' : 'error';
-  } catch {
+    if (res.status === 429) {
+      logger.warn({ status: 429 }, 'MAL health check rate-limited');
+      return 'rate_limited';
+    }
+    if (res.ok) return 'ok';
+    logger.warn({ status: res.status, statusText: res.statusText }, 'MAL health check non-ok');
+    return 'error';
+  } catch (err) {
+    logger.warn({ err }, 'MAL health check failed');
     return 'timeout';
   }
 }
@@ -81,4 +91,4 @@ async function checkKv() {
   }
 }
 
-module.exports = { checkTmdb, checkJikan, checkKitsu, checkTorrentclaw, checkNyaa, checkKv };
+module.exports = { checkTmdb, checkMal, checkKitsu, checkTorrentclaw, checkNyaa, checkKv };
