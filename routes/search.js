@@ -20,6 +20,18 @@ const QUERY_STOPWORDS = new Set([
   'the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'with', 'no', 'na'
 ]);
 
+const BATCH_KEYWORDS = [
+  /complete series/i,
+  /complete season/i,
+  /complete collection/i,
+  /season\s*\d+\s*[-â€“]\s*\d+/i,
+  /seasons?\s*[\d,&\s-]+\bcomplete/i,
+  /full season/i,
+  /all episodes/i,
+  /\bbatch\b/i,
+  /\bS\d+\s*[-â€“]\s*S?\d+\b/i
+];
+
 function normalizeSearchQuery(raw) {
   const trimmed = raw.trim();
   const lower = trimmed.toLowerCase();
@@ -184,10 +196,8 @@ function groupByFranchise(items) {
       movies: []
     };
 
-    const batchKeywords = [/complete series/i, /seasons?\s*[\d-]+/i, /complete collection/i, /full season/i, /all episodes/i];
-    const batchSeason = finalSeasons.find(s => batchKeywords.some(re => re.test(s.label)));
-    if (batchSeason) {
-      collection.seasons = [batchSeason];
+    if (finalSeasons.length === 1 && BATCH_KEYWORDS.some(re => re.test(finalSeasons[0].label))) {
+      collection.seasons = [finalSeasons[0]];
     }
 
     results.push(collection);
@@ -336,7 +346,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   const intent = parseQueryIntent(normalizedQuery);
   const normalizedQ = intent.normalizedTitle || normalizedQuery.trim().toLowerCase();
 
-  let cacheKey = `search:v7:${category}:${normalizedQ}:page:${page}:perPage:${perPage}:group:${group}`;
+  let cacheKey = `search:v9:${category}:${normalizedQ}:page:${page}:perPage:${perPage}:group:${group}`;
   if (force) {
     cacheKey += `:force:${Date.now()}`;
   } else {
