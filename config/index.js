@@ -2,9 +2,10 @@ const constants = require('./constants.json');
 
 const TMDB_API_KEY = process.env.TMDB_API_KEY;
 const TORRENTCLAW_API_KEY = process.env.TORRENTCLAW_API_KEY;
+const MAL_CLIENT_ID = process.env.MAL_CLIENT_ID;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
-const requiredEnv = ['TMDB_API_KEY', 'TORRENTCLAW_API_KEY'];
+const requiredEnv = ['TMDB_API_KEY', 'TORRENTCLAW_API_KEY', 'MAL_CLIENT_ID'];
 for (const key of requiredEnv) {
   if (!process.env[key]) {
     throw new Error(`Missing required environment variable: ${key}`);
@@ -37,7 +38,7 @@ const TOKUSATSU_FRANCHISES = constants.TOKUSATSU_FRANCHISES || [];
 const categoryConfig = {
   anime: {
     id: 'anime',
-    metadataProvider: 'jikan',
+    metadataProvider: 'mal',
     mediaType: MediaType.SERIES,
     torrentSources: ['nyaa_rss', 'torrentclaw']
   },
@@ -52,6 +53,7 @@ const categoryConfig = {
 module.exports = {
   TMDB_API_KEY,
   TORRENTCLAW_API_KEY,
+  MAL_CLIENT_ID,
   GROQ_API_KEY,
   CoverageType,
   MediaType,
