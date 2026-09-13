@@ -123,14 +123,27 @@ function computeExtraTokenPenalty(media, releaseTitle) {
     }
   }
 
+  let penalty = 0;
   const extras = releaseTokens.filter(t =>
     t.length > 2 && !EXTRA_TOKEN_STOPWORDS.has(t) && !mediaTokens.has(t)
   );
 
-  if (extras.length >= 4) return 0.6;
-  if (extras.length >= 3) return 0.4;
-  if (extras.length >= 2) return 0.2;
-  return 0;
+  if (extras.length >= 4) penalty = 0.6;
+  else if (extras.length >= 3) penalty = 0.4;
+  else if (extras.length >= 2) penalty = 0.2;
+
+  const releaseYearMatch = releaseNorm.match(/\b(19|20)\d{2}\b/);
+  if (releaseYearMatch && media.year) {
+    const releaseYear = parseInt(releaseYearMatch[0]);
+    const diff = Math.abs(releaseYear - media.year);
+    if (diff >= 2) {
+      penalty = Math.max(penalty, 0.4);
+    } else if (diff === 1) {
+      penalty = Math.max(penalty, 0.2);
+    }
+  }
+
+  return penalty;
 }
 
 function computeSeasonMatchConfidence(media, parsed) {
@@ -287,7 +300,7 @@ function calculateReleaseScore(parsed, coverage, workMatch, seasonMatch, formatM
   const seedMult = seedersMultiplier(parsed.seeders);
   base *= seedMult;
 
-  if (parsed.isMovieCollection && media.mediaType !== 'movie') {
+  if (parsed.isMovieRelease && media.mediaType !== 'movie') {
     base *= 0.4;
   }
 
@@ -384,7 +397,7 @@ function selectBestCandidates(ranked, media, queryIntent) {
     const coverageType = key.split('|')[1];
     if (coverageType === 'complete_series' || coverageType === 'complete_season' || coverageType === 'movie') {
       group.sort((a, b) => b.score - a.score);
-      result.push(group[0]);
+      result.push(...group.slice(0, 3));
     }
   }
 
@@ -417,7 +430,13 @@ function selectBestCandidates(ranked, media, queryIntent) {
     result.push(ranked[0]);
   }
 
-  return result;
+  const seenMagnet = new Set();
+  return result.filter(r => {
+    const key = r.magnet || r.name;
+    if (seenMagnet.has(key)) return false;
+    seenMagnet.add(key);
+    return true;
+  });
 }
 
 function isReleaseValid(release, media) {
