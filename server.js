@@ -148,12 +148,12 @@ const RECOMMENDED_TTL_RESOLVED = 31536000;
 const RECOMMENDED_TTL_UNRESOLVED = 3600;
 
 const DEFAULT_RECOMMENDED = [
-  { id: '', title: 'Neon Genesis Evangelion', subtitle: '1995 Â· 26 eps Â· Action, Drama, Sci-Fi', category: 'anime', poster: '', provider: 'mal', providerId: '', hasRelease: true, hasBatch: false, collection: false },
-  { id: 'tmdb:239741', title: 'Kamen Rider Kuuga', subtitle: '2000 Â· 49 eps Â· Action, Adventure, Drama', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/86L7SWkabVrSJAYpYbyryl4q2mU.jpg', provider: 'tmdb', providerId: '239741', hasRelease: true, hasBatch: false, collection: false },
-  { id: '', title: 'Fullmetal Alchemist: Brotherhood', subtitle: '2009 Â· 64 eps Â· Action, Adventure, Drama', category: 'anime', poster: '', provider: 'mal', providerId: '', hasRelease: true, hasBatch: false, collection: false },
-  { id: 'tmdb:139653', title: 'Kamen Rider Build', subtitle: '2017 Â· 49 eps Â· Action, Comedy, Drama', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/t7eAwG1qYxoeNxyUfaM4NqxAkGy.jpg', provider: 'tmdb', providerId: '139653', hasRelease: true, hasBatch: false, collection: false },
-  { id: 'tmdb:2253', title: 'Ultraman Tiga', subtitle: '1996 Â· 52 eps Â· Action, Adventure, Sci-Fi', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/lYvAiTqXFGuLqos0Wi7899scn6z.jpg', provider: 'tmdb', providerId: '2253', hasRelease: true, hasBatch: false, collection: false },
-  { id: '', title: 'Cowboy Bebop', subtitle: '1998 Â· 26 eps Â· Action, Adventure, Drama', category: 'anime', poster: '', provider: 'mal', providerId: '', hasRelease: true, hasBatch: false, collection: false }
+  { id: '', title: 'Neon Genesis Evangelion', subtitle: '1995 Ã‚Â· 26 eps Ã‚Â· Action, Drama, Sci-Fi', category: 'anime', poster: '', provider: 'mal', providerId: '', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'tmdb:239741', title: 'Kamen Rider Kuuga', subtitle: '2000 Ã‚Â· 49 eps Ã‚Â· Action, Adventure, Drama', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/86L7SWkabVrSJAYpYbyryl4q2mU.jpg', provider: 'tmdb', providerId: '239741', hasRelease: true, hasBatch: false, collection: false },
+  { id: '', title: 'Fullmetal Alchemist: Brotherhood', subtitle: '2009 Ã‚Â· 64 eps Ã‚Â· Action, Adventure, Drama', category: 'anime', poster: '', provider: 'mal', providerId: '', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'tmdb:139653', title: 'Kamen Rider Build', subtitle: '2017 Ã‚Â· 49 eps Ã‚Â· Action, Comedy, Drama', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/t7eAwG1qYxoeNxyUfaM4NqxAkGy.jpg', provider: 'tmdb', providerId: '139653', hasRelease: true, hasBatch: false, collection: false },
+  { id: 'tmdb:2253', title: 'Ultraman Tiga', subtitle: '1996 Ã‚Â· 52 eps Ã‚Â· Action, Adventure, Sci-Fi', category: 'tokusatsu', poster: 'https://image.tmdb.org/t/p/w500/lYvAiTqXFGuLqos0Wi7899scn6z.jpg', provider: 'tmdb', providerId: '2253', hasRelease: true, hasBatch: false, collection: false },
+  { id: '', title: 'Cowboy Bebop', subtitle: '1998 Ã‚Â· 26 eps Ã‚Â· Action, Adventure, Drama', category: 'anime', poster: '', provider: 'mal', providerId: '', hasRelease: true, hasBatch: false, collection: false }
 ];
 
 async function resolveRecommendedAnimeEntries(items) {
