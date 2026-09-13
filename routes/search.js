@@ -160,11 +160,16 @@ function groupByFranchise(items) {
     }
     const finalSeasons = Array.from(seasonMap.values());
 
+    const plural = seasons.length === 1 ? 'season' : 'seasons';
+    const yearSuffix = minYear
+      ? ` | ${minYear}${maxYear && maxYear !== minYear ? '-' + maxYear : ''}`
+      : '';
+
     const collection = {
       id: `franchise:${base}`,
       title: cleanTitle,
       aliases,
-      subtitle: `${seasons.length} seasons${minYear ? ` Â· ${minYear}${maxYear && maxYear !== minYear ? 'â€“' + maxYear : ''}` : ''}`,
+      subtitle: `${seasons.length} ${plural}${yearSuffix}`,
       category: first.category,
       mediaType: 'collection',
       year: minYear,
@@ -331,7 +336,7 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
   const intent = parseQueryIntent(normalizedQuery);
   const normalizedQ = intent.normalizedTitle || normalizedQuery.trim().toLowerCase();
 
-  let cacheKey = `search:v6:${category}:${normalizedQ}:page:${page}:perPage:${perPage}:group:${group}`;
+  let cacheKey = `search:v7:${category}:${normalizedQ}:page:${page}:perPage:${perPage}:group:${group}`;
   if (force) {
     cacheKey += `:force:${Date.now()}`;
   } else {
@@ -366,12 +371,17 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
       try {
         const malResults = await searchMal(normalizedQuery, 5);
         if (malResults.length > 0) {
-          items = malResults
+          const mapped = malResults
             .map(item => normalizeMalMedia(item, 'anime'))
             .filter(Boolean)
             .map(media => mediaToCard(media))
-            .filter(Boolean);
-          logger.info({ count: items.length, provider: 'mal' }, 'MAL results');
+            .filter(card => card && card.poster);
+          if (mapped.length > 0) {
+            items = mapped;
+            logger.info({ count: items.length, provider: 'mal' }, 'MAL results');
+          } else {
+            logger.warn({ query: normalizedQuery }, 'MAL returned results but none had posters, falling through');
+          }
         }
       } catch (err) {
         anyProviderFailed = true;
@@ -382,8 +392,13 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
         try {
           const kitsuItems = await searchKitsu(normalizedQuery, 5);
           if (kitsuItems.length > 0) {
-            items = kitsuItems.map(item => mediaToCard(item)).filter(Boolean);
-            logger.info({ count: items.length, provider: 'kitsu' }, 'Kitsu fallback results');
+            const mapped = kitsuItems
+              .map(item => mediaToCard(item))
+              .filter(card => card && card.poster);
+            if (mapped.length > 0) {
+              items = mapped;
+              logger.info({ count: items.length, provider: 'kitsu' }, 'Kitsu fallback results');
+            }
           }
         } catch (err) {
           anyProviderFailed = true;
@@ -554,11 +569,9 @@ router.get('/search', validate(searchSchema, 'query'), asyncHandler(async (req, 
     hasMore: end < unique.length
   };
 
-  if (!force) {
+  if (!force && unique.length > 0) {
     let ttlSeconds;
-    if (unique.length === 0) {
-      ttlSeconds = anyProviderFailed ? 30 : 300;
-    } else if (unique.length < 3) {
+    if (unique.length < 3) {
       ttlSeconds = 43200;
     } else {
       ttlSeconds = 86400;
