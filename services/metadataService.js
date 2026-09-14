@@ -6,7 +6,6 @@ const KITSU_API = 'https://kitsu.io/api/edge';
 const KITSU_TTL_SECONDS = 21600;
 const TMDB_TTL_SECONDS = 86400;
 const CACHE_FETCH_LIMIT = 10;
-
 const kitsuInFlight = new Map();
 
 async function fetchAndCacheKitsuSearch(query, cacheKey) {
@@ -16,19 +15,15 @@ async function fetchAndCacheKitsuSearch(query, cacheKey) {
     timeoutMs: 4000,
     maxRetries: 0
   });
-
   if (!res.ok) {
     throw new Error(`Kitsu HTTP ${res.status}`);
   }
-
   const data = await res.json();
   const items = data.data || [];
-
   if (items.length === 0) {
     await setCache(cacheKey, [], KITSU_TTL_SECONDS);
     return [];
   }
-
   const candidates = items.filter(item =>
     item.attributes?.showType && ['TV', 'movie', 'OVA', 'ONA', 'special'].includes(item.attributes.showType)
   );
@@ -36,18 +31,15 @@ async function fetchAndCacheKitsuSearch(query, cacheKey) {
     await setCache(cacheKey, [], KITSU_TTL_SECONDS);
     return [];
   }
-
   const sorted = candidates.sort((a, b) => {
     const aScore = (a.attributes?.episodeCount || 0) * 10 + (a.attributes?.averageRating ? parseFloat(a.attributes.averageRating) : 0);
     const bScore = (b.attributes?.episodeCount || 0) * 10 + (b.attributes?.averageRating ? parseFloat(b.attributes.averageRating) : 0);
     return bScore - aScore;
   });
-
   const normalized = sorted
     .slice(0, CACHE_FETCH_LIMIT)
     .map(item => normalizeKitsuMedia(item))
     .filter(Boolean);
-
   await setCache(cacheKey, normalized, KITSU_TTL_SECONDS);
   return normalized;
 }
@@ -55,18 +47,14 @@ async function fetchAndCacheKitsuSearch(query, cacheKey) {
 async function searchKitsu(query, limit = 5) {
   const normalizedQuery = query.trim().toLowerCase();
   const cacheKey = `kitsu_search:${normalizedQuery}`;
-
   const cached = await getCache(cacheKey);
   if (cached) return cached.slice(0, limit);
-
   if (kitsuInFlight.has(cacheKey)) {
     const pending = await kitsuInFlight.get(cacheKey);
     return pending.slice(0, limit);
   }
-
   const promise = fetchAndCacheKitsuSearch(query, cacheKey);
   kitsuInFlight.set(cacheKey, promise);
-
   try {
     const result = await promise;
     return result.slice(0, limit);
@@ -98,7 +86,6 @@ function normalizeKitsuMedia(item) {
   const status = attrs.status || 'UNKNOWN';
   const popularity = attrs.popularityRank || 0;
   const aliases = [titles.en_jp, titles.ja_jp, ...(attrs.abbreviatedTitles || [])].filter(Boolean);
-
   return {
     id: `kitsu:${item.id}`,
     title,
@@ -123,6 +110,12 @@ function normalizeTmdbMedia(item, category) {
   if (!item) return null;
   const title = item.title || item.name || 'Unknown';
   const mediaType = item.media_type || (item.title ? 'movie' : 'tv');
+  
+  let episodeCount = item.number_of_episodes || null;
+  if (episodeCount && episodeCount > 500) {
+    episodeCount = null;
+  }
+
   return {
     id: `tmdb:${item.id}`,
     title,
@@ -130,7 +123,7 @@ function normalizeTmdbMedia(item, category) {
     year: item.release_date?.slice(0, 4) || item.first_air_date?.slice(0, 4) || null,
     poster: item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : '',
     mediaType: mediaType === 'movie' ? 'movie' : 'series',
-    episodeCount: item.number_of_episodes || null,
+    episodeCount: episodeCount,
     status: item.status || 'UNKNOWN',
     provider: 'tmdb',
     providerId: String(item.id),
@@ -138,8 +131,8 @@ function normalizeTmdbMedia(item, category) {
     origin_country: item.origin_country?.[0] || 'JP',
     popularity: item.popularity || 0,
     seasonNumber: null,
-    seasonEpisodeCount: item.number_of_episodes || null,
-    totalEpisodeCount: item.number_of_episodes || null
+    seasonEpisodeCount: episodeCount,
+    totalEpisodeCount: episodeCount
   };
 }
 
@@ -169,19 +162,15 @@ function mediaToCard(media) {
 async function fetchTmdb(endpoint, params = {}) {
   const baseUrl = 'https://api.themoviedb.org/3';
   const url = new URL(`${baseUrl}/${endpoint}`);
-
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== null) {
       url.searchParams.set(key, value);
     }
   }
-
   const cacheKey = `tmdb:${url.toString()}`;
   const cached = await getCache(cacheKey);
   if (cached) return cached;
-
   url.searchParams.set('api_key', process.env.TMDB_API_KEY);
-
   const res = await httpGet(url.toString(), {
     timeoutMs: 4000,
     maxRetries: 0
