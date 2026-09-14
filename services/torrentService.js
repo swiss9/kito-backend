@@ -113,7 +113,7 @@ async function searchTorrentClaw(title) {
   try {
     const res = await httpGet(url, { timeoutMs: 5000, maxRetries: 1 });
     if (res.status === 404) {
-      rootLogger.warn(`[torrentclaw] 404 for "${title}" â€“ skipping retries`);
+      rootLogger.warn(`[torrentclaw] 404 for "${title}" – skipping retries`);
       return [];
     }
     const data = await res.json();
@@ -175,12 +175,12 @@ async function searchNyaaRSSWithRetry(title, category = 'anime', force = false, 
     } catch (err) {
       lastError = err;
       if (err.status === 429) {
-        await setCache('nyaa_rate_limited', true, 300);
+        await setCache('nyaa_rate_limited', true, 60);
         rootLogger.warn(`[nyaa] Rate limit hit for "${title}". Aborting retries to prevent timeout.`);
         break;
       }
       if (attempt < retries) {
-        const delay = Math.min(1000 * Math.pow(2, attempt), 2000);
+        const delay = Math.min(800 * Math.pow(2, attempt), 1500);
         await new Promise(r => setTimeout(r, delay));
       }
     }
@@ -200,6 +200,7 @@ async function searchNyaaRSS(title, category = 'anime', force = false) {
   if (category === 'tokusatsu') {
     catParam = '4_1';
   }
+
   const baseUrl = `https://nyaa.si/?page=rss&c=${catParam}&q=${encodeURIComponent(title)}`;
   const cacheKey = `nyaa:${baseUrl}`;
 
@@ -233,9 +234,12 @@ async function searchNyaaRSS(title, category = 'anime', force = false) {
   rootLogger.debug(`[nyaa] query "${title}" (${category}) -> ${parsedItems.length} items`);
 
   const results = parsedItems.map(item => {
-    const magnet = item.infoHash
-      ? `magnet:?xt=urn:btih:${item.infoHash}&dn=${encodeURIComponent(item.title)}${ANIME_TRACKERS}`
-      : (item.link || '');
+    let magnet = '';
+    if (item.infoHash) {
+      magnet = `magnet:?xt=urn:btih:${item.infoHash}&dn=${encodeURIComponent(item.title)}${ANIME_TRACKERS}`;
+    } else if (item.link && item.link.startsWith('magnet:')) {
+      magnet = item.link;
+    }
     return {
       name: item.title,
       magnet,
@@ -245,6 +249,7 @@ async function searchNyaaRSS(title, category = 'anime', force = false) {
       uploader: ''
     };
   });
+
   await setCache(cacheKey, results, 43200);
   return results;
 }
@@ -305,7 +310,6 @@ async function searchWithAggregation(media, sourceList, queryTiers, searchFnMap,
   }
 
   log.debug(`[aggregate] raw results for "${media.title}": ${rawResults.length} (rateLimited: ${rateLimited})`);
-
   return { results: deduplicateRawReleases(rawResults), rateLimited };
 }
 
@@ -382,6 +386,7 @@ async function searchReleasesWithFallback(media, force = false, logger = null) {
   const nyaaResult = await searchAnimeReleases(media, force, log);
   const nyaaResults = nyaaResult.results;
   rateLimited = nyaaResult.rateLimited;
+
   log.info({ source: 'nyaa', count: nyaaResults.length, rateLimited }, 'Nyaa search completed');
   allRawResults = allRawResults.concat(nyaaResults);
 
@@ -392,7 +397,12 @@ async function searchReleasesWithFallback(media, force = false, logger = null) {
   const isMovie = media.mediaType === 'movie' || media.episodeCount === 1;
   const hasCompleteRelease = isMovie
     ? (nyaaResults.length > 0)
-    : nyaaResults.some(r => isReleaseValid(r, media) && r.name.match(/complete|batch/i));
+    : nyaaResults.some(r => {
+        if (!isReleaseValid(r, media)) return false;
+        const name = r.name.toLowerCase();
+        return /complete|batch|\b\d{1,3}\s*-\s*\d{1,3}\b/.test(name);
+      });
+
   const shouldFallback = (nyaaResults.length === 0) || !hasCompleteRelease;
 
   if (shouldFallback) {
@@ -415,6 +425,7 @@ async function searchReleasesWithFallback(media, force = false, logger = null) {
 
   const merged = deduplicateRawReleases(allRawResults);
   log.info({ title: media.title, total: merged.length, warnings }, 'Torrent search finalised');
+
   return { releases: merged, warnings, rateLimited };
 }
 
