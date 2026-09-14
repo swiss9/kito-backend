@@ -92,11 +92,9 @@ function computeSequelPenalty(media, releaseTitle) {
   if (!releaseTitle) return 0;
   const releaseNorm = normalizeTitle(releaseTitle);
   if (!releaseNorm) return 0;
-
   const mediaTitlesNorm = [media.title, ...(media.aliases || [])]
     .map(t => normalizeTitle(t))
     .filter(Boolean);
-
   for (const marker of SEQUEL_PHRASES) {
     if (!releaseNorm.includes(marker)) continue;
     const inMedia = mediaTitlesNorm.some(t => t.includes(marker));
@@ -110,10 +108,8 @@ function computeExtraTokenPenalty(media, releaseTitle) {
   if (!releaseTitle) return 0;
   const releaseNorm = normalizeTitle(releaseTitle);
   if (!releaseNorm) return 0;
-
   const releaseTokens = releaseNorm.split(/\s+/).filter(Boolean);
   if (releaseTokens.length === 0) return 0;
-
   const mediaTokens = new Set();
   for (const t of [media.title, ...(media.aliases || [])]) {
     const norm = normalizeTitle(t);
@@ -122,16 +118,13 @@ function computeExtraTokenPenalty(media, releaseTitle) {
       if (tok) mediaTokens.add(tok);
     }
   }
-
   let penalty = 0;
   const extras = releaseTokens.filter(t =>
     t.length > 2 && !EXTRA_TOKEN_STOPWORDS.has(t) && !mediaTokens.has(t)
   );
-
   if (extras.length >= 4) penalty = 0.6;
   else if (extras.length >= 3) penalty = 0.4;
   else if (extras.length >= 2) penalty = 0.2;
-
   const releaseYearMatch = releaseNorm.match(/\b(19|20)\d{2}\b/);
   if (releaseYearMatch && media.year) {
     const releaseYear = parseInt(releaseYearMatch[0]);
@@ -142,7 +135,6 @@ function computeExtraTokenPenalty(media, releaseTitle) {
       penalty = Math.max(penalty, 0.2);
     }
   }
-
   return penalty;
 }
 
@@ -199,12 +191,9 @@ function estimateReasonableSizeMB(quality, source, codec) {
   else if (quality >= 720) base = 700;
   else if (quality >= 480) base = 300;
   else base = 200;
-
   if (source === 'bluray') base *= 1.2;
   else if (source === 'web-dl') base *= 0.9;
-
   if (codec === 'x265' || codec === 'hevc') base *= 0.7;
-
   return base;
 }
 
@@ -251,16 +240,13 @@ function computeEpisodeCountForSize(parsed, coverage, media) {
 
 function computeConfidenceLabel(workMatch, coverage, media) {
   const covType = coverage.coverageType;
-
   if (covType === 'unknown') return 'low';
   if (covType === 'movie' && media.mediaType !== 'movie') return 'low';
-
   if (covType === 'complete_series' || covType === 'complete_season' || covType === 'movie') {
     if (workMatch >= 0.8) return 'high';
     if (workMatch >= 0.5) return 'medium';
     return 'low';
   }
-
   if (workMatch >= 0.9) return 'high';
   if (workMatch >= 0.6) return 'medium';
   return 'low';
@@ -332,7 +318,6 @@ function rankReleases(media, releases, queryIntent) {
     const parsed = parseReleaseName(r.name);
     parsed.seeders = r.seeders || 0;
     parsed.leechers = r.leechers || 0;
-
     const coverage = calculateCoverage(parsed, media);
     const workMatch = computeWorkMatchConfidence(media, parsed.title || r.name);
     const seasonMatch = computeSeasonMatchConfidence(media, parsed);
@@ -342,7 +327,6 @@ function rankReleases(media, releases, queryIntent) {
     const sizeMultiplier = computeFileSizeMultiplier(r.size, parsed.quality, parsed.source, parsed.codec, episodeCount);
     const score = calculateReleaseScore(parsed, coverage, workMatch, seasonMatch, formatMatch, episodeIntentMatch, sizeMultiplier, media);
     const confidenceLabel = computeConfidenceLabel(workMatch, coverage, media);
-
     return {
       ...r,
       ...parsed,
