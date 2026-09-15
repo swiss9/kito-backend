@@ -12,3 +12,5 @@ API for [kito-search.vercel.app](https://kito-search.vercel.app). Anime and toku
 - `GET /api/recommended` — curated handpicked list
 - `GET /api/health` — upstream status
 - `DELETE /api/admin/cache` — clear cache (admin token required)
+
+© 2026 KITO. All rights reserved.
